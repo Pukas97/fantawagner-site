@@ -620,6 +620,7 @@ auctionsRef.on('child_added', function(snap){
   if (a && a.status === 'open') {
     const title = 'Asta aperta';
     const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
+    showLocalNotification(title, body);
     sendPushToAll(title, body);
   }
 });
@@ -630,10 +631,12 @@ auctionsRef.on('child_changed', function(snap){
   if (a && a.status === 'open' && Number(a.bid||0) > Number(prev.bid||0)) {
     const title = 'Nuovo rilancio';
     const body  = a.player + ' a ' + a.bid + ' (da ' + (a.lastBidder||'') + ')';
+    showLocalNotification(title, body);
     sendPushToAll(title, body);
   }
 });
 
 // Mantieni cache aggiornata
 auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
+
 
