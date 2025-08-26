@@ -1,0 +1,9 @@
+{
+  "name": "fantawagner-site",
+  "version": "1.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "dependencies": {
+    "google-auth-library": "^9.14.1"
+  }
+}

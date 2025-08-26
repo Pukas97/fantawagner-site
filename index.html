@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <link rel="manifest" href="/manifest.json">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Asta Fantacalcio – Live</title>
+  <style>
+    :root { --gap: 14px; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background:#0f172a; color:#e2e8f0; }
+    header { padding: 16px 20px; background:#111827; position: sticky; top: 0; z-index: 10; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+    header h1 { margin: 0; font-size: 18px; letter-spacing:.3px; }
+    .container { padding: 18px; display: grid; grid-template-columns: 360px 1fr; gap: var(--gap); }
+    .card { background:#111827; border:1px solid #1f2937; border-radius: 14px; padding: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+    .muted { color:#94a3b8; font-size: 13px; }
+    input, button { font: inherit; }
+    input[type="text"], input[type="number"] { width: 100%; padding: 10px 12px; border-radius: 10px; border:1px solid #334155; background:#0b1220; color:#e2e8f0; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
+    .btn { padding: 10px 12px; border-radius: 10px; border:1px solid #334155; background:#0b1220; color:#e2e8f0; cursor: pointer; }
+    .btn:hover { filter: brightness(1.15); }
+    .btn.primary { background:#2563eb; border-color:#1d4ed8; color:white; }
+    .btn.warn { background:#f59e0b; border-color:#d97706; color:#111827; }
+    .btn.danger { background:#ef4444; border-color:#dc2626; color:white; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn.sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+    .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #334155; background:#0b1220; font-size:12px; color:#cbd5e1; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 10px; border-bottom:1px solid #1f2937; font-size: 14px; }
+    th { text-align: left; color:#94a3b8; position: sticky; top: 0; background:#111827; }
+    tr:hover { background:#0b1220; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); }
+    .space { height: 10px; }
+    .footer { padding: 12px 18px; color:#94a3b8; font-size: 12px; }
+    .nowrap { white-space: nowrap; }
+    .scroll { max-height: 60vh; overflow: auto; border-radius: 10px; border:1px solid #1f2937; }
+    .tag { font-size: 12px; padding: 2px 6px; border-radius:6px; border:1px solid #334155; }
+    .stack { display:flex; flex-direction:column; gap:10px; }
+    #bootStatus { display:none; }
+    #debugBox { display:none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#0b1220; color:#9ee6a6; border:1px solid #1f2937; border-radius:10px; padding:8px; max-height:220px; overflow:auto; font-size:12px; }
+
+    /* Aste */
+    .price { font-size: 28px; font-weight: 800; margin: 6px 0; letter-spacing: .5px; }
+    .last-bidder { display:inline-flex; align-items:center; gap:6px; font-size:12px; }
+    .last-bidder .who { background:#10b98122; border:1px solid #10b98155; color:#a7f3d0; padding:2px 8px; border-radius:999px; }
+    .auction-card { padding: 10px; border:1px solid #1f2937; border-radius: 12px; background:#0b1220; }
+    .timer { font-weight:700; font-variant-numeric: tabular-nums; }
+    .timer.warn { color:#f59e0b; }
+    .timer.danger { color:#ef4444; }
+
+    /* Partecipanti */
+    .participants-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 12px; }
+    .participant-card { background:#0b1220; border:1px solid #1f2937; border-radius:12px; padding:10px; }
+    .progress { width:100%; height:8px; background:#0b1322; border:1px solid #1f2937; border-radius:999px; overflow:hidden; }
+    .progress > i { display:block; height:100%; background:#22c55e; }
+
+    /* Impostazioni timer */
+    .settings { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items:end; }
+    .settings .field { display:flex; flex-direction:column; gap:6px; }
+  </style>
+
+  <!-- Firebase libs -->
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-database-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-messaging-compat.js" defer></script>
+
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>Asta Fantacalcio – Live</h1>
+    <div id="bootStatus" class="boot">JS non avviato</div>
+    <noscript><div class="boot" style="background:#ef4444;color:white;">JavaScript disattivato: attivalo per usare l'app</div></noscript>
+  </header>
+
+  <div class="container">
+    <!-- Colonna sinistra: Aste attive + Admin -->
+    <section class="card">
+      <div class="stack">
+        <div>
+          <label class="muted">Il tuo nome</label>
+          <input id="myName" type="text" placeholder="Es. Luca / Pukas / Team Rossi" />
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <button class="btn primary" onclick="enablePush()">Abilita notifiche</button>
+        </div>
+
+        <div>
+          <div class="muted">Aste attive</div>
+          <div id="auctionsList" class="stack"></div>
+          <div class="muted" style="margin-top:6px">Suggerimento: dal listone a destra premi <em>“Metti all’asta”</em> su più giocatori per aprire più aste in parallelo.</div>
+        </div>
+
+        <div class="space"></div>
+        <div class="muted">Zona sicura (amministrazione)</div>
+        <div class="row" style="align-items:start;">
+          <div class="stack">
+            <div class="settings">
+              <div class="field">
+                <label class="muted">Durata asta (minuti)</label>
+                <input id="timerMinutes" type="number" min="1" step="1" placeholder="Es. 2" />
+              </div>
+              <div class="field">
+                <label class="muted">Estensione sotto 1:00 (secondi)</label>
+                <input id="extendSeconds" type="number" min="0" step="5" placeholder="Es. 15" />
+              </div>
+            </div>
+            <div class="row">
+              <button class="btn warn sm" onclick="resetOpenAuctions()" title="Cancella solo le aste aperte">Reset Aste Aperte</button>
+              <button class="btn danger sm" onclick="resetEverything()" title="Cancella tutto: aste, assegnazioni, partecipanti e token">Reset Totale</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="debugBox"></div>
+      </div>
+    </section>
+
+    <!-- Colonna destra (sopra): Listone -->
+    <section class="card">
+      <div class="row">
+        <div>
+          <label class="muted">Cerca nel listone</label>
+          <input id="search" type="text" placeholder="Cerca per nome, ruolo, squadra…" />
+        </div>
+        <div style="display:flex; align-items:end; justify-content:flex-end; gap:10px;">
+          <span class="muted">CSV:</span>
+          <span id="csvStatus" class="pill">In attesa…</span>
+          <button class="btn" onclick="loadCSV()">Ricarica</button>
+        </div>
+      </div>
+      <div class="space"></div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Ruolo</th>
+              <th>Squadra</th>
+              <th>Quotazione</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tbodyList"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Colonna sinistra (sotto): Partecipanti (auto) -->
+    <section class="card" style="grid-column: 1 / span 1;">
+      <div class="muted">Partecipanti</div>
+      <div id="participants" class="participants-grid"></div>
+    </section>
+
+    <!-- Colonna destra (sotto): Aste chiuse -->
+    <section class="card">
+      <div class="stack">
+        <div class="muted">Aste chiuse</div>
+        <ol id="closedBox" class="muted" style="margin:0; padding-left:18px;"></ol>
+      </div>
+    </section>
+  </div>
+
+  <div class="footer">Ogni partecipante parte da 500 crediti. Al momento dell'assegnazione, il costo viene sottratto dal budget residuo mostrato sotto al nome.</div>
+</body>
+</html>
