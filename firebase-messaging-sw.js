@@ -1,3 +1,4 @@
+// v3 — SW per FCM web, data-only + fallback push (Android + iOS PWA)
 importScripts('https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/11.0.1/firebase-messaging-compat.js');
 
@@ -8,6 +9,9 @@ firebase.initializeApp({
   messagingSenderId: "97053268763",
   appId: "1:97053268763:web:95ec2acd4f41b65a9091be"
 });
+
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 
 const messaging = firebase.messaging();
 
@@ -22,7 +26,6 @@ async function seen(key, ttl = 30) {
 }
 
 function normalizeData(raw) {
-  // FCM a volte incapsula come {data:{...}}, altre come {...}
   const d = raw?.data ? raw.data : raw || {};
   const title   = d.title || 'FantAsta';
   const body    = d.body  || '';
@@ -46,26 +49,23 @@ async function show(dataObj) {
   });
 }
 
-// --- Handler FCM ufficiale (data-only) --------------------------------------
+// FCM background (data-only)
 messaging.onBackgroundMessage(async (payload) => {
-  // Data-only → mostriamo noi
   await show(payload);
 });
 
-// --- Fallback raw Push (alcuni ambienti/Chrome versioni) ---------------------
+// Fallback raw Push (iOS PWA / vari edge-case)
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
     try {
       const j = event.data ? event.data.json() : null;
-      // Proviamo sia al top-level sia dentro .data
       const dataObj = j?.data ? j.data : j;
-      if (dataObj) { await show(dataObj); }
-    } catch (e) {
-      // nothing
-    }
+      if (dataObj) await show(dataObj);
+    } catch {}
   })());
 });
 
+// Click → apri/porta in foreground
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = event.notification?.data?.url || '/';
@@ -76,4 +76,3 @@ self.addEventListener('notificationclick', (event) => {
     return clients.openWindow(url);
   })());
 });
-
