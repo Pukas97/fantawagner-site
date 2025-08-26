@@ -33,6 +33,34 @@ firebase.initializeApp(firebaseConfig);
 debug('firebase init ok');
 const db = firebase.database();
 
+// === NOTIFY LOCK: evita invii duplicati tra più schede/dispositivi ===
+function b64(s){ try { return btoa(unescape(encodeURIComponent(String(s)))).replace(/=+$/,''); } catch(e){ return String(Math.random()).slice(2); } }
+
+async function acquireNotifyLock(key){
+  const lockRef = db.ref('notifyLocks/' + b64(key));
+  const res = await lockRef.transaction(curr => {
+    if (curr && curr.at) return curr; // già preso
+    return { at: Date.now() };
+  });
+  return !!(res && res.committed);
+}
+
+async function fireNotifyOnce(title, body, lockKey){
+  try{
+    const got = await acquireNotifyLock(lockKey);
+    if (!got) { debug('notify SKIP (lock)', lockKey); return; }
+    const res = await fetch('/.netlify/functions/notify', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ title, body })
+    });
+    const txt = await res.text().catch(()=> '');
+    debug('notify sent', lockKey, res.status, txt);
+  }catch(e){
+    debug('notify error', lockKey, e && e.message || String(e));
+  }
+}
+
 // test DB
 db.ref('__ping').set(Date.now()).then(()=>debug('rtdb write: ok')).catch(err=>debug('rtdb write ERROR: ' + (err && err.message || String(err))));
 
@@ -628,6 +656,7 @@ auctionsRef.on('child_changed', function(snap){
 
 // Mantieni cache aggiornata
 auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
+
 
 
 
