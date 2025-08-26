@@ -7,20 +7,28 @@ firebase.initializeApp({
   authDomain: "fanta-wagner.firebaseapp.com",
   projectId: "fanta-wagner",
   messagingSenderId: "97053268763",
-  appId: "1:97053268763:web:95ec2acd4f41b65a9091be",
+  appId: "1:97053268763:web:95ec2acd4f41b65a9091be"
 });
 
 const messaging = firebase.messaging();
 
-// Background push (Android/Safari)
+// Se il messaggio ha già "notification", Chrome/Safari la mostrano da soli.
+// Per evitare doppioni, NON chiamiamo showNotification in questo caso.
+// Se invece fosse "data-only", la mostriamo noi (fallback).
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || 'Notifica Asta';
-  const options = {
-    body: payload.notification?.body || '',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-  };
-  self.registration.showNotification(title, options);
+  try {
+    if (payload && payload.notification) {
+      // auto-shown dal browser → niente
+      return;
+    }
+    const title = (payload && payload.data && payload.data.title) || 'Notifica';
+    const body  = (payload && payload.data && payload.data.body)  || '';
+    self.registration.showNotification(title, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png'
+    });
+  } catch(e) {
+    // silenzio
+  }
 });
-
-
