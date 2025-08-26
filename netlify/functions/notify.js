@@ -73,24 +73,24 @@ async function logResult(token, ok, err){
 
 // ✅ PATCH compat Android: icon/badge/urgenza nel blocco webpush
 async function sendToToken(accessToken, token, notification){
-const body = {
-message: {
-  token,
-  webpush: {
-    headers: { Urgency: 'high', TTL: '120' },
-    notification: {
-      title: notification.title,
-      body: notification.body,
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-      vibrate: [100, 50, 100],
-      requireInteraction: false
-    },
-    fcmOptions: { link: notification.link || '/' }
-  }
-}
-
-};
+  const body = {
+    message: {
+      token,
+      // ❌ niente "notification" top-level qui
+      webpush: {
+        headers: { Urgency: 'high', TTL: '120' },
+        notification: {
+          title: notification.title,
+          body: notification.body,
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-192.png',
+          vibrate: [100, 50, 100],
+          requireInteraction: false
+        },
+        fcmOptions: { link: notification.link || '/' }
+      }
+    }
+  };
   const resp = await fetch(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`, {
     method:'POST',
     headers:{ 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -102,7 +102,6 @@ message: {
   }
   return resp.json();
 }
-
 exports.handler = async (event) => {
   if (event.httpMethod === 'GET') return { statusCode: 405, body: 'Method Not Allowed' };
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
@@ -161,5 +160,6 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: 'ERR: ' + (e && e.message || String(e)) };
   }
 };
+
 
 
