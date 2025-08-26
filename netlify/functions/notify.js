@@ -1,4 +1,3 @@
-// netlify/functions/notify.js
 const { GoogleAuth } = require('google-auth-library');
 const https = require('https');
 
@@ -9,21 +8,14 @@ function getServiceAccountFromEnv(){
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT;
   if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT non impostata');
   try { return JSON.parse(raw); }
-  catch {
-    const decoded = Buffer.from(raw, 'base64').toString('utf8');
-    return JSON.parse(decoded);
-  }
+  catch { return JSON.parse(Buffer.from(raw, 'base64').toString('utf8')); }
 }
 
 async function getAccessToken(){
   const sa = getServiceAccountFromEnv();
-  const auth = new GoogleAuth({
-    credentials: sa,
-    scopes: ['https://www.googleapis.com/auth/firebase.messaging']
-  });
+  const auth = new GoogleAuth({ credentials: sa, scopes:['https://www.googleapis.com/auth/firebase.messaging'] });
   const client = await auth.getClient();
   const token = await client.getAccessToken();
-  if (!token || !token.token) throw new Error('Access token non ottenuto');
   return token.token;
 }
 
@@ -34,133 +26,57 @@ function fetchAllTokensFromRTDB(){
       res.on('data', d => data += d);
       res.on('end', () => {
         try{
-          const val = JSON.parse(String(data||'null')) || {};
-          const tokens = Object.values(val).map(x => x && x.token).filter(Boolean);
-          resolve(tokens);
+          const val = JSON.parse(data||'null') || {};
+          resolve(Object.values(val).map(x=>x&&x.token).filter(Boolean));
         }catch(e){ reject(e); }
       });
     }).on('error', reject);
   });
 }
 
-function buildNotificationFromType(type, payload){
+// build notification payload → solo data
+function buildDataPayload(type, payload){
   switch(type){
     case 'auction_open':
-      return { title: 'Asta aperta', body: `${payload.player} (${payload.role || '—'}) – base ${payload.bid} crediti`, link: '/' };
+      return {
+        title:'Asta aperta',
+        body:`${payload.player} (${payload.role||'—'}) – base ${payload.bid}`,
+        eventId:`open:${payload.player}:${payload.bid}`,
+        tag:`auction:${payload.player}`
+      };
     case 'bid':
-      return { title: 'Nuovo rilancio', body: `${payload.player}: ${payload.bid} crediti da ${payload.bidder}`, link: '/' };
-    case 'assigned':
-      return { title: 'Asta chiusa', body: `${payload.player} a ${payload.winner} per ${payload.price} crediti`, link: '/' };
+      return {
+        title:'Nuovo rilancio',
+        body:`${payload.player}: ${payload.bid} da ${payload.bidder}`,
+        eventId:`bid:${payload.player}:${payload.bid}`,
+        tag:`auction:${payload.player}`
+      };
     default:
-      return { title: 'FantAsta', body: 'Aggiornamento', link: '/' };
+      return { title:'FantAsta', body:'Aggiornamento', eventId:`misc:${Date.now()}`, tag:'misc' };
   }
 }
 
-// 🔎 log esito per token (utile per capire gli errori Android)
-async function logResult(token, ok, err){
-  try {
-    const key = token.replace(/[^a-zA-Z0-9_-]/g, '');
-    const payload = ok
-      ? { lastOkAt: Date.now(), lastError: null }
-      : { lastErrorAt: Date.now(), lastError: String(err||'unknown') };
-    await fetch(`${RTDB_URL}/tokens/${key}.json`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-  } catch {}
-}
-
-// ✅ PATCH compat Android: icon/badge/urgenza nel blocco webpush
-async function sendToToken(accessToken, token, notification){
-  const body = {
-    message: {
-      token,
-      notification: {
-        title: notification.title,
-        body: notification.body
-      },
-      webpush: {
-        headers: { Urgency: 'high', TTL: '120' }, // TTL 120s
-        notification: {
-          title: notification.title,
-          body: notification.body,
-          icon: '/icons/icon-192.png',   // assicurati che esista
-          badge: '/icons/icon-192.png',  // opzionale
-          vibrate: [100, 50, 100],
-          requireInteraction: false
-        },
-        fcmOptions: { link: notification.link || '/' }
-      }
-    }
-  };
+async function sendToToken(accessToken, token, data){
+  const body = { message:{ token, data } };
   const resp = await fetch(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`, {
     method:'POST',
-    headers:{ 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    headers:{ 'Authorization':`Bearer ${accessToken}`, 'Content-Type':'application/json' },
+    body:JSON.stringify(body)
   });
-  if (!resp.ok) {
-    const txt = await resp.text();
-    throw new Error(`FCM ${resp.status}: ${txt}`);
-  }
+  if (!resp.ok) throw new Error(`FCM ${resp.status}: ${await resp.text()}`);
   return resp.json();
 }
 
 exports.handler = async (event) => {
-  if (event.httpMethod === 'GET') return { statusCode: 405, body: 'Method Not Allowed' };
-  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
-
+  if (event.httpMethod !== 'POST') return { statusCode:405, body:'Method Not Allowed' };
   try{
-    const body = JSON.parse(event.body || '{}');
-
-    // Percorso 1: { type, payload }
-    if (body.type) {
-      const notif = buildNotificationFromType(body.type, body.payload || {});
-      const [accessToken, tokens] = await Promise.all([ getAccessToken(), fetchAllTokensFromRTDB() ]);
-      if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
-
-      const results = await Promise.all(tokens.map(async t => {
-        try {
-          const r = await sendToToken(accessToken, t, notif);
-          await logResult(t, true);
-          return r;
-        } catch(e) {
-          await logResult(t, false, e.message);
-          return { error: e.message };
-        }
-      }));
-      const ok = results.filter(r => !r.error).length;
-      const ko = results.length - ok;
-      return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
-    }
-
-    // Percorso 2: { title, body, tokens? }
-    if (body.title && body.body) {
-      let tokens = Array.isArray(body.tokens) ? body.tokens.filter(Boolean) : null;
-      if (!tokens || tokens.length === 0) {
-        tokens = await fetchAllTokensFromRTDB();
-      }
-      if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
-
-      const notif = { title: body.title, body: body.body, link: '/' };
-      const accessToken = await getAccessToken();
-      const results = await Promise.all(tokens.map(async t => {
-        try {
-          const r = await sendToToken(accessToken, t, notif);
-          await logResult(t, true);
-          return r;
-        } catch(e) {
-          await logResult(t, false, e.message);
-          return { error: e.message };
-        }
-      }));
-      const ok = results.filter(r => !r.error).length;
-      const ko = results.length - ok;
-      return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
-    }
-
-    return { statusCode: 400, body: 'Payload non valido (manca type oppure title/body)' };
-  }catch(e){
-    return { statusCode: 500, body: 'ERR: ' + (e && e.message || String(e)) };
-  }
+    const body = JSON.parse(event.body||'{}');
+    const type = body.type;
+    if (!type) return { statusCode:400, body:'Payload non valido' };
+    const data = buildDataPayload(type, body.payload||{});
+    const [accessToken, tokens] = await Promise.all([ getAccessToken(), fetchAllTokensFromRTDB() ]);
+    if (!tokens.length) return { statusCode:200, body:'Nessun token registrato' };
+    await Promise.all(tokens.map(t => sendToToken(accessToken, t, data).catch(e=>e)));
+    return { statusCode:200, body:`Inviato ${tokens.length} token` };
+  }catch(e){ return { statusCode:500, body:'ERR: '+e.message }; }
 };
