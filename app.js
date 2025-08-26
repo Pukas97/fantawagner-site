@@ -552,26 +552,32 @@ let fcmToken = null;
 const messaging = firebase.messaging();
 let swReg = null;
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' })
-    .then((reg) => {
-      swReg = reg;
-      // Compat: associa esplicitamente il SW a messaging (utile per background)
-      if (messaging.useServiceWorker) messaging.useServiceWorker(reg);
-      debug('SW registrato');
-    })
-    .catch(err => debug('SW ERROR: ' + (err?.message || String(err))));
-}
+// attendo la registrazione del SW PRIMA di chiedere il token
+const swReady = (async () => {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+    swReg = reg;
+    if (messaging.useServiceWorker) messaging.useServiceWorker(reg); // compat
+    debug('SW registrato');
+    return reg;
+  } catch (err) {
+    debug('SW ERROR: ' + (err?.message || String(err)));
+    return null;
+  }
+})();
 
 window.enablePush = async function(){
   try {
     await Notification.requestPermission();
     if (Notification.permission !== 'granted') { alert('Permesso negato.'); return; }
 
+    const reg = await swReady; // << aspetta davvero il SW
+    if (!reg) { alert('Service Worker non pronto'); return; }
+
     const vapidKey = 'BDWmtT7_gKB9wdDiPAttBed939_smK9VJNK1aUceF-K3YmNAOA0UECeg2jQzr7x33O2PK6cuoureOYZuLLo8XNA';
 
-    // Passa esplicitamente la serviceWorkerRegistration
-    const token = await messaging.getToken({ vapidKey, serviceWorkerRegistration: swReg });
+    const token = await messaging.getToken({ vapidKey, serviceWorkerRegistration: reg });
     if (!token) { alert('Token non ottenuto'); return; }
     fcmToken = token;
     debug('FCM token ok');
@@ -591,15 +597,15 @@ window.enablePush = async function(){
   }
 };
 
-// Solo toast in foreground (niente Notification API qui)
+// Foreground → SOLO toast
 function showToast(msg){
   const box = document.getElementById('debugBox');
   if (box){ const div=document.createElement('div'); div.textContent='🔔 '+msg; box.appendChild(div); }
   console.log('[TOAST]', msg);
 }
-function showLocalNotification(title, body){ showToast(title + ' — ' + body); }
+function showLocalNotification(title, body){ showToast(title+' — '+body); }
 
-// Invio a Netlify (tipo + payload). La Netlify manderà data-only (OK per SW).
+// Invio a Netlify (tipo + payload) → Netlify manda data-only
 async function sendPushToAll(type, payload){
   try {
     const res = await fetch('/.netlify/functions/notify', {
@@ -614,12 +620,11 @@ async function sendPushToAll(type, payload){
   }
 }
 
-// Invia UNA SOLA VOLTA per evento usando una transazione con “marcatore” casuale
+// Transazione idempotente (una sola push per evento)
 async function sendPushOnce(auctionKey, type, payload){
   const flagRef = firebase.database().ref('auctions/'+auctionKey+'/.pushFlags/'+type);
   const myMark = Math.random().toString(36).slice(2);
   const result = await flagRef.transaction(curr => curr || myMark);
-  // Vince chi riesce a scrivere il proprio marcatore
   if (result.committed && result.snapshot.val() === myMark) {
     await sendPushToAll(type, payload);
   } else {
@@ -627,34 +632,29 @@ async function sendPushOnce(auctionKey, type, payload){
   }
 }
 
-// Listener DB → toast (foreground) + push (una volta sola)
+// Listener → toast in-page + push idempotente
 auctionsRef.on('child_added', (snap) => {
-  const key = snap.key;
-  const a = snap.val();
+  const key = snap.key, a = snap.val();
   if (a && a.status === 'open') {
-    const title = 'Asta aperta';
-    const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
+    const title='Asta aperta', body=`${a.player} (${a.role||''}${a.team?', '+a.team:''})`;
     showLocalNotification(title, body);
-    // tipo coerente con la function: 'auction_open'
-    sendPushOnce(key, 'auction_open', { player: a.player, role: a.role, bid: a.bid });
+    sendPushOnce(key, 'auction_open', { player:a.player, role:a.role, bid:a.bid });
   }
 });
 
 auctionsRef.on('child_changed', (snap) => {
-  const key  = snap.key;
-  const a    = snap.val();
+  const key = snap.key, a = snap.val();
   const prev = (auctionsCache && auctionsCache[key]) || {};
   if (a && a.status === 'open' && Number(a.bid||0) > Number(prev.bid||0)) {
-    const title = 'Nuovo rilancio';
-    const body  = a.player + ' a ' + a.bid + ' (da ' + (a.lastBidder||'') + ')';
+    const title='Nuovo rilancio', body=`${a.player} a ${a.bid} (da ${a.lastBidder||''})`;
     showLocalNotification(title, body);
-    // tipo coerente con la function: 'bid'
-    sendPushOnce(key, 'bid', { player: a.player, bid: a.bid, bidder: a.lastBidder });
+    sendPushOnce(key, 'bid', { player:a.player, bid:a.bid, bidder:a.lastBidder });
   }
 });
 
 // Mantieni cache aggiornata
 auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
+
 
 
 
