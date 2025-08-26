@@ -11,16 +11,37 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-messaging.onBackgroundMessage((payload) => {
-  // ✅ Se il payload ha già "notification", Chrome la mostra in automatico: NON duplicare.
-  if (payload && payload.notification) return;
+// dedupe base (30s)
+async function recentlySeen(key, ttl = 30) {
+  const cache = await caches.open('fw-dedupe');
+  const hit = await cache.match(key);
+  if (hit) return true;
+  await cache.put(key, new Response('1', { headers: { 'x-exp': Date.now() + ttl * 1000 } }));
+  return false;
+}
 
-  // Fallback per messaggi "data-only" (non il tuo caso attuale)
-  const title = (payload && payload.data && payload.data.title) || 'Notifica Asta';
-  const body  = (payload && payload.data && payload.data.body)  || '';
-  self.registration.showNotification(title, {
+messaging.onBackgroundMessage(async (payload) => {
+  const data = payload?.data || {};
+  const title = data.title || 'FantAsta';
+  const body  = data.body  || '';
+  const icon  = data.icon  || '/icons/icon-192.png';
+  const eventId = data.eventId || `${title}|${body}`;
+  const tag = data.tag || eventId;
+
+  if (await recentlySeen(eventId)) return;
+
+  await self.registration.showNotification(title, {
     body,
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png'
+    icon,
+    badge: '/icons/icon-192.png',
+    tag,
+    renotify: false,
+    data: { url: data.link || '/', eventId }
   });
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(clients.openWindow(url));
 });
