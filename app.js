@@ -547,17 +547,14 @@ function renderParticipants(assignList){
   });
 }
 
-// === 🔔 Push (INVARIATO)
+// === 🔔 Push
 let fcmToken = null;
 const messaging = firebase.messaging();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/firebase-messaging-sw.js')
-    .then(function(reg) {
-      debug('SW registrato');
-      messaging.useServiceWorker(reg);
-    })
-    .catch(function(err){ debug('SW ERROR: ' + (err && err.message || String(err))); });
+    .then(reg => debug('SW registrato'))
+    .catch(err => debug('SW ERROR: ' + err.message));
 }
 
 window.enablePush = async function(){
@@ -569,73 +566,74 @@ window.enablePush = async function(){
     if (!token) { alert('Token non ottenuto'); return; }
     fcmToken = token;
     debug('FCM token ok');
-
     const tokenKey = token.replace(/[^a-zA-Z0-9_-]/g, '');
     await firebase.database().ref('tokens/' + tokenKey).set({
-      token: token,
-      user: (document.getElementById('myName').value || 'Anonimo'),
-      ua: navigator.userAgent,
-      at: Date.now()
+      token, user: (el('myName').value || 'Anonimo'),
+      ua: navigator.userAgent, at: Date.now()
     });
-
-    alert('Push abilitate su questo dispositivo ✔');
+    alert('Push abilitate ✔');
   } catch (e) {
-    debug('enablePush ERROR: ' + (e && e.message || String(e)));
+    debug('enablePush ERROR: ' + e.message);
     alert('Impossibile abilitare la push.');
   }
 };
 
-function showLocalNotification(title, body){
-  try {
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== 'granted') return;
-    new Notification(title, { body: body });
-  } catch(e){}
+// solo toast interno
+function showToast(msg){
+  const box = document.getElementById('debugBox');
+  if (box){ const div=document.createElement('div'); div.textContent='🔔 '+msg; box.appendChild(div); }
+  console.log('[TOAST]', msg);
 }
+function showLocalNotification(title, body){ showToast(title+' — '+body); }
 
+// fetch tokens
 async function fetchAllTokens(){
   const snap = await firebase.database().ref('tokens').once('value');
   const val = snap.val() || {};
   return Object.values(val).map(x => x.token).filter(Boolean);
 }
 
-async function sendPushToAll(title, body){
+// invio a tutti via netlify function
+async function sendPushToAll(type, payload){
   try {
-    const tokens = await fetchAllTokens();
-    if (!tokens.length) { debug('Nessun token registrato'); return; }
     const res = await fetch('/.netlify/functions/notify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, body, tokens })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, payload })
     });
-    const j = await res.json().catch(()=> ({}));
-    debug('notify status ' + res.status + ' -> ' + JSON.stringify(j));
-  } catch (e) {
-    debug('notify ERROR: ' + (e && e.message || String(e)));
+    const j = await res.text();
+    debug('notify status ' + res.status + ' -> ' + j);
+  } catch (e) { debug('notify ERROR: ' + e.message); }
+}
+
+// invio una volta sola per evento
+async function sendPushOnce(key, type, payload){
+  const flagRef = firebase.database().ref('auctions/'+key+'/.pushFlags/'+type);
+  const result = await flagRef.transaction(curr => curr || Date.now());
+  if (result.committed && result.snapshot.val() === Date.now()) {
+    await sendPushToAll(type, payload);
   }
 }
 
-auctionsRef.on('child_added', function(snap){
-  const a = snap.val();
-  if (a && a.status === 'open') {
-    const title = 'Asta aperta';
-    const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
+// Listener DB → toast + push
+auctionsRef.on('child_added', (snap) => {
+  const key = snap.key, a = snap.val();
+  if (a?.status === 'open') {
+    const title='Asta aperta', body=`${a.player} (${a.role||''}${a.team?', '+a.team:''})`;
     showLocalNotification(title, body);
-    sendPushToAll(title, body);
+    sendPushOnce(key, 'auction_open', { player:a.player, role:a.role, bid:a.bid });
   }
 });
-
-auctionsRef.on('child_changed', function(snap){
-  const a = snap.val();
-  const prev = (auctionsCache && auctionsCache[snap.key]) || {};
-  if (a && a.status === 'open' && Number(a.bid||0) > Number(prev.bid||0)) {
-    const title = 'Nuovo rilancio';
-    const body  = a.player + ' a ' + a.bid + ' (da ' + (a.lastBidder||'') + ')';
+auctionsRef.on('child_changed', (snap) => {
+  const key = snap.key, a = snap.val();
+  const prev = auctionsCache[key]||{};
+  if (a?.status==='open' && Number(a.bid||0) > Number(prev.bid||0)) {
+    const title='Nuovo rilancio', body=`${a.player} a ${a.bid} (da ${a.lastBidder||''})`;
     showLocalNotification(title, body);
-    sendPushToAll(title, body);
+    sendPushOnce(key, `bid_${a.bid}`, { player:a.player, bid:a.bid, bidder:a.lastBidder });
   }
 });
 
 // Mantieni cache aggiornata
 auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
+
 
