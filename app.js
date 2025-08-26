@@ -550,90 +550,111 @@ function renderParticipants(assignList){
 // === 🔔 Push
 let fcmToken = null;
 const messaging = firebase.messaging();
+let swReg = null;
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/firebase-messaging-sw.js')
-    .then(reg => debug('SW registrato'))
-    .catch(err => debug('SW ERROR: ' + err.message));
+  navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' })
+    .then((reg) => {
+      swReg = reg;
+      // Compat: associa esplicitamente il SW a messaging (utile per background)
+      if (messaging.useServiceWorker) messaging.useServiceWorker(reg);
+      debug('SW registrato');
+    })
+    .catch(err => debug('SW ERROR: ' + (err?.message || String(err))));
 }
 
 window.enablePush = async function(){
   try {
     await Notification.requestPermission();
     if (Notification.permission !== 'granted') { alert('Permesso negato.'); return; }
+
     const vapidKey = 'BDWmtT7_gKB9wdDiPAttBed939_smK9VJNK1aUceF-K3YmNAOA0UECeg2jQzr7x33O2PK6cuoureOYZuLLo8XNA';
-    const token = await messaging.getToken({ vapidKey });
+
+    // Passa esplicitamente la serviceWorkerRegistration
+    const token = await messaging.getToken({ vapidKey, serviceWorkerRegistration: swReg });
     if (!token) { alert('Token non ottenuto'); return; }
     fcmToken = token;
     debug('FCM token ok');
+
     const tokenKey = token.replace(/[^a-zA-Z0-9_-]/g, '');
     await firebase.database().ref('tokens/' + tokenKey).set({
-      token, user: (el('myName').value || 'Anonimo'),
-      ua: navigator.userAgent, at: Date.now()
+      token,
+      user: (document.getElementById('myName').value || 'Anonimo'),
+      ua: navigator.userAgent,
+      at: Date.now()
     });
-    alert('Push abilitate ✔');
+
+    alert('Push abilitate su questo dispositivo ✔');
   } catch (e) {
-    debug('enablePush ERROR: ' + e.message);
+    debug('enablePush ERROR: ' + (e?.message || String(e)));
     alert('Impossibile abilitare la push.');
   }
 };
 
-// solo toast interno
+// Solo toast in foreground (niente Notification API qui)
 function showToast(msg){
   const box = document.getElementById('debugBox');
   if (box){ const div=document.createElement('div'); div.textContent='🔔 '+msg; box.appendChild(div); }
   console.log('[TOAST]', msg);
 }
-function showLocalNotification(title, body){ showToast(title+' — '+body); }
+function showLocalNotification(title, body){ showToast(title + ' — ' + body); }
 
-// fetch tokens
-async function fetchAllTokens(){
-  const snap = await firebase.database().ref('tokens').once('value');
-  const val = snap.val() || {};
-  return Object.values(val).map(x => x.token).filter(Boolean);
-}
-
-// invio a tutti via netlify function
+// Invio a Netlify (tipo + payload). La Netlify manderà data-only (OK per SW).
 async function sendPushToAll(type, payload){
   try {
     const res = await fetch('/.netlify/functions/notify', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, payload })
     });
-    const j = await res.text();
-    debug('notify status ' + res.status + ' -> ' + j);
-  } catch (e) { debug('notify ERROR: ' + e.message); }
-}
-
-// invio una volta sola per evento
-async function sendPushOnce(key, type, payload){
-  const flagRef = firebase.database().ref('auctions/'+key+'/.pushFlags/'+type);
-  const result = await flagRef.transaction(curr => curr || Date.now());
-  if (result.committed && result.snapshot.val() === Date.now()) {
-    await sendPushToAll(type, payload);
+    const txt = await res.text();
+    debug('notify status ' + res.status + ' -> ' + txt);
+  } catch (e) {
+    debug('notify ERROR: ' + (e?.message || String(e)));
   }
 }
 
-// Listener DB → toast + push
+// Invia UNA SOLA VOLTA per evento usando una transazione con “marcatore” casuale
+async function sendPushOnce(auctionKey, type, payload){
+  const flagRef = firebase.database().ref('auctions/'+auctionKey+'/.pushFlags/'+type);
+  const myMark = Math.random().toString(36).slice(2);
+  const result = await flagRef.transaction(curr => curr || myMark);
+  // Vince chi riesce a scrivere il proprio marcatore
+  if (result.committed && result.snapshot.val() === myMark) {
+    await sendPushToAll(type, payload);
+  } else {
+    debug('push già inviata per ' + auctionKey + ' ['+type+']');
+  }
+}
+
+// Listener DB → toast (foreground) + push (una volta sola)
 auctionsRef.on('child_added', (snap) => {
-  const key = snap.key, a = snap.val();
-  if (a?.status === 'open') {
-    const title='Asta aperta', body=`${a.player} (${a.role||''}${a.team?', '+a.team:''})`;
+  const key = snap.key;
+  const a = snap.val();
+  if (a && a.status === 'open') {
+    const title = 'Asta aperta';
+    const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
     showLocalNotification(title, body);
-    sendPushOnce(key, 'auction_open', { player:a.player, role:a.role, bid:a.bid });
+    // tipo coerente con la function: 'auction_open'
+    sendPushOnce(key, 'auction_open', { player: a.player, role: a.role, bid: a.bid });
   }
 });
+
 auctionsRef.on('child_changed', (snap) => {
-  const key = snap.key, a = snap.val();
-  const prev = auctionsCache[key]||{};
-  if (a?.status==='open' && Number(a.bid||0) > Number(prev.bid||0)) {
-    const title='Nuovo rilancio', body=`${a.player} a ${a.bid} (da ${a.lastBidder||''})`;
+  const key  = snap.key;
+  const a    = snap.val();
+  const prev = (auctionsCache && auctionsCache[key]) || {};
+  if (a && a.status === 'open' && Number(a.bid||0) > Number(prev.bid||0)) {
+    const title = 'Nuovo rilancio';
+    const body  = a.player + ' a ' + a.bid + ' (da ' + (a.lastBidder||'') + ')';
     showLocalNotification(title, body);
-    sendPushOnce(key, `bid_${a.bid}`, { player:a.player, bid:a.bid, bidder:a.lastBidder });
+    // tipo coerente con la function: 'bid'
+    sendPushOnce(key, 'bid', { player: a.player, bid: a.bid, bidder: a.lastBidder });
   }
 });
 
 // Mantieni cache aggiornata
 auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
+
 
 
