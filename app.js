@@ -585,14 +585,6 @@ window.enablePush = async function(){
   }
 };
 
-function showLocalNotification(title, body){
-  try {
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== 'granted') return;
-    new Notification(title, { body: body });
-  } catch(e){}
-}
-
 async function fetchAllTokens(){
   const snap = await firebase.database().ref('tokens').once('value');
   const val = snap.val() || {};
@@ -636,6 +628,7 @@ auctionsRef.on('child_changed', function(snap){
 
 // Mantieni cache aggiornata
 auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
+
 
 
 
