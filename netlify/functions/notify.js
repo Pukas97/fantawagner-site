@@ -1,3 +1,4 @@
+// v3 — invio "data-only" (FCM v1) con eventId/tag per dedupe/collapse
 const { GoogleAuth } = require('google-auth-library');
 const https = require('https');
 
@@ -39,14 +40,15 @@ function fetchAllTokensFromRTDB(){
   });
 }
 
+// Costruisce il payload "data-only" usato dal SW
 function buildDataPayload(type, payload){
   switch(type){
     case 'auction_open':
       return {
         title: 'Asta aperta',
         body: `${payload.player} (${payload.role || '—'}) – base ${payload.bid}`,
-        tag: `auction:${payload.player}`,
-        eventId: `open:${payload.player}:${payload.bid}`,
+        tag: `auction:${payload.player}`,                   // collapse nativo
+        eventId: `open:${payload.player}:${payload.bid}`,   // dedupe SW
         link: '/'
       };
     case 'bid':
@@ -69,7 +71,7 @@ function buildDataPayload(type, payload){
 }
 
 async function sendToToken(accessToken, token, data){
-  const body = { message: { token, data } }; // data-only
+  const body = { message: { token, data } }; // <-- SOLO data (niente "notification")
   const resp = await fetch(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`, {
     method:'POST',
     headers:{ 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -82,7 +84,7 @@ async function sendToToken(accessToken, token, data){
   return resp.json();
 }
 
-// piccolo log su RTDB per debug consegna
+// Log minimale su RTDB per debug consegna
 async function logDebug(obj){
   try{
     await fetch(`${RTDB_URL}/_debug/notify.json`, {
@@ -90,7 +92,7 @@ async function logDebug(obj){
       headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify({ at: Date.now(), ...obj })
     });
-  }catch(e){}
+  }catch{}
 }
 
 exports.handler = async (event) => {
