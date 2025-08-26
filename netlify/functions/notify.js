@@ -39,16 +39,15 @@ function fetchAllTokensFromRTDB(){
   });
 }
 
-// Costruisce il payload "data-only" usato dal SW
 function buildDataPayload(type, payload){
   switch(type){
     case 'auction_open':
       return {
         title: 'Asta aperta',
         body: `${payload.player} (${payload.role || '—'}) – base ${payload.bid}`,
-        tag: `auction:${payload.player}`,                   // collapse/tag
-        eventId: `open:${payload.player}:${payload.bid}`,   // dedupe nel SW
-        link: '/'                                           // opzionale: click destination
+        tag: `auction:${payload.player}`,
+        eventId: `open:${payload.player}:${payload.bid}`,
+        link: '/'
       };
     case 'bid':
       return {
@@ -70,10 +69,10 @@ function buildDataPayload(type, payload){
 }
 
 async function sendToToken(accessToken, token, data){
-  const body = { message: { token, data } }; // <-- SOLO data
+  const body = { message: { token, data } }; // data-only
   const resp = await fetch(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    method:'POST',
+    headers:{ 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
   if (!resp.ok) {
@@ -81,6 +80,17 @@ async function sendToToken(accessToken, token, data){
     throw new Error(`FCM ${resp.status}: ${txt}`);
   }
   return resp.json();
+}
+
+// piccolo log su RTDB per debug consegna
+async function logDebug(obj){
+  try{
+    await fetch(`${RTDB_URL}/_debug/notify.json`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ at: Date.now(), ...obj })
+    });
+  }catch(e){}
 }
 
 exports.handler = async (event) => {
@@ -93,16 +103,26 @@ exports.handler = async (event) => {
 
     const data = buildDataPayload(type, body.payload || {});
     const [accessToken, tokens] = await Promise.all([ getAccessToken(), fetchAllTokensFromRTDB() ]);
-    if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
+    if (!tokens.length) {
+      await logDebug({ type, data, info:'no-tokens' });
+      return { statusCode: 200, body: 'Nessun token registrato' };
+    }
 
     const results = await Promise.all(tokens.map(async t => {
-      try { return await sendToToken(accessToken, t, data); }
-      catch(e){ return { error: String(e?.message || e) }; }
+      try {
+        const r = await sendToToken(accessToken, t, data);
+        await logDebug({ type, data, token: t.slice(0,20)+'…', ok: true, resp: r?.name || 'ok' });
+        return r;
+      } catch(e) {
+        await logDebug({ type, data, token: t.slice(0,20)+'…', ok: false, err: String(e?.message || e) });
+        return { error: e.message };
+      }
     }));
     const ok = results.filter(r => !r.error).length;
     const ko = results.length - ok;
     return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
   }catch(e){
+    await logDebug({ ok:false, fatal:String(e?.message || e) });
     return { statusCode: 500, body: 'ERR: ' + (e?.message || String(e)) };
   }
 };
