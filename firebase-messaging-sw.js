@@ -11,17 +11,19 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// dedupe base (30s)
-async function recentlySeen(key, ttl = 30) {
+// Dedupe semplice: evita doppi entro 30s
+async function recentlySeen(key, ttlSeconds = 30) {
   const cache = await caches.open('fw-dedupe');
-  const hit = await cache.match(key);
+  const req = new Request('https://dedupe.local/' + encodeURIComponent(key));
+  const hit = await cache.match(req);
   if (hit) return true;
-  await cache.put(key, new Response('1', { headers: { 'x-exp': Date.now() + ttl * 1000 } }));
+  await cache.put(req, new Response('1', { headers: { 'x-exp': String(Date.now() + ttlSeconds*1000) }}));
   return false;
 }
 
 messaging.onBackgroundMessage(async (payload) => {
-  const data = payload?.data || {};
+  // Ci aspettiamo messaggi data-only
+  const data  = payload?.data || {};
   const title = data.title || 'FantAsta';
   const body  = data.body  || '';
   const icon  = data.icon  || '/icons/icon-192.png';
@@ -42,6 +44,6 @@ messaging.onBackgroundMessage(async (payload) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
+  const url = event.notification?.data?.url || '/';
   event.waitUntil(clients.openWindow(url));
 });
