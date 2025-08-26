@@ -547,12 +547,12 @@ function renderParticipants(assignList){
   });
 }
 
-// === 🔔 Push
+// === 🔔 Push (v3)
 let fcmToken = null;
 const messaging = firebase.messaging();
 let swReg = null;
 
-// attendo la registrazione del SW PRIMA di chiedere il token
+// Registra SW e attendi davvero prima di chiedere token
 const swReady = (async () => {
   if (!('serviceWorker' in navigator)) return null;
   try {
@@ -569,23 +569,24 @@ const swReady = (async () => {
 
 window.enablePush = async function(){
   try {
-    await Notification.requestPermission();
-    if (Notification.permission !== 'granted') { alert('Permesso negato.'); return; }
+    // iOS richiede gesto utente: collega enablePush() a un bottone
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { alert('Permesso negato.'); return; }
 
-    const reg = await swReady; // << aspetta davvero il SW
+    const reg = await swReady;
     if (!reg) { alert('Service Worker non pronto'); return; }
 
     const vapidKey = 'BDWmtT7_gKB9wdDiPAttBed939_smK9VJNK1aUceF-K3YmNAOA0UECeg2jQzr7x33O2PK6cuoureOYZuLLo8XNA';
-
     const token = await messaging.getToken({ vapidKey, serviceWorkerRegistration: reg });
     if (!token) { alert('Token non ottenuto'); return; }
+
     fcmToken = token;
     debug('FCM token ok');
 
     const tokenKey = token.replace(/[^a-zA-Z0-9_-]/g, '');
     await firebase.database().ref('tokens/' + tokenKey).set({
       token,
-      user: (document.getElementById('myName').value || 'Anonimo'),
+      user: (document.getElementById('myName').value || 'Lorenzo' || 'Anonimo'),
       ua: navigator.userAgent,
       at: Date.now()
     });
@@ -597,7 +598,7 @@ window.enablePush = async function(){
   }
 };
 
-// Foreground → SOLO toast
+// Foreground → SOLO toast (niente Notification API qui, evita doppioni)
 function showToast(msg){
   const box = document.getElementById('debugBox');
   if (box){ const div=document.createElement('div'); div.textContent='🔔 '+msg; box.appendChild(div); }
@@ -605,7 +606,7 @@ function showToast(msg){
 }
 function showLocalNotification(title, body){ showToast(title+' — '+body); }
 
-// Invio a Netlify (tipo + payload) → Netlify manda data-only
+// Invio a Netlify (tipo + payload) → la function manda "data-only"
 async function sendPushToAll(type, payload){
   try {
     const res = await fetch('/.netlify/functions/notify', {
@@ -620,7 +621,7 @@ async function sendPushToAll(type, payload){
   }
 }
 
-// Transazione idempotente (una sola push per evento)
+// Invio UNA SOLA VOLTA per evento (idempotente via transaction)
 async function sendPushOnce(auctionKey, type, payload){
   const flagRef = firebase.database().ref('auctions/'+auctionKey+'/.pushFlags/'+type);
   const myMark = Math.random().toString(36).slice(2);
@@ -654,6 +655,7 @@ auctionsRef.on('child_changed', (snap) => {
 
 // Mantieni cache aggiornata
 auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
+
 
 
 
