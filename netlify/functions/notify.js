@@ -76,14 +76,17 @@ async function sendToToken(accessToken, token, notification){
   const body = {
     message: {
       token,
-      // ❌ niente "notification" top-level qui
+      notification: {
+        title: notification.title,
+        body: notification.body
+      },
       webpush: {
-        headers: { Urgency: 'high', TTL: '120' },
+        headers: { Urgency: 'high', TTL: '120' }, // TTL 120s
         notification: {
           title: notification.title,
           body: notification.body,
-          icon: '/icons/icon-192.png',
-          badge: '/icons/icon-192.png',
+          icon: '/icons/icon-192.png',   // assicurati che esista
+          badge: '/icons/icon-192.png',  // opzionale
           vibrate: [100, 50, 100],
           requireInteraction: false
         },
@@ -102,6 +105,7 @@ async function sendToToken(accessToken, token, notification){
   }
   return resp.json();
 }
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'GET') return { statusCode: 405, body: 'Method Not Allowed' };
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
@@ -109,78 +113,54 @@ exports.handler = async (event) => {
   try{
     const body = JSON.parse(event.body || '{}');
 
-// Percorso 1: { type, payload }
-if (body.type) {
-  const notif = buildNotificationFromType(body.type, body.payload || {});
+    // Percorso 1: { type, payload }
+    if (body.type) {
+      const notif = buildNotificationFromType(body.type, body.payload || {});
+      const [accessToken, tokens] = await Promise.all([ getAccessToken(), fetchAllTokensFromRTDB() ]);
+      if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
 
-  // ⬇️ PRIMA prendiamo token + accessToken
-  const [accessToken, tokensRaw] = await Promise.all([
-    getAccessToken(),
-    fetchAllTokensFromRTDB()
-  ]);
-
-  // ⬇️ DEDUPLICA token (niente null, niente duplicati)
-  const uniqueTokens = Array.from(new Set((tokensRaw || []).filter(Boolean)));
-  if (!uniqueTokens.length) {
-    return { statusCode: 200, body: 'Nessun token registrato' };
-  }
-
-  // ⬇️ INVIO ai soli token unici (con logResult invariato)
-  const results = await Promise.all(uniqueTokens.map(async (t) => {
-    try {
-      const r = await sendToToken(accessToken, t, notif);
-      await logResult(t, true);
-      return r;
-    } catch (e) {
-      await logResult(t, false, e.message);
-      return { error: e.message, token: t };
+      const results = await Promise.all(tokens.map(async t => {
+        try {
+          const r = await sendToToken(accessToken, t, notif);
+          await logResult(t, true);
+          return r;
+        } catch(e) {
+          await logResult(t, false, e.message);
+          return { error: e.message };
+        }
+      }));
+      const ok = results.filter(r => !r.error).length;
+      const ko = results.length - ok;
+      return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
     }
-  }));
 
-  const ok = results.filter(r => !r.error).length;
-  const ko = results.length - ok;
-  return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
-}
+    // Percorso 2: { title, body, tokens? }
+    if (body.title && body.body) {
+      let tokens = Array.isArray(body.tokens) ? body.tokens.filter(Boolean) : null;
+      if (!tokens || tokens.length === 0) {
+        tokens = await fetchAllTokensFromRTDB();
+      }
+      if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
 
-// Percorso 2: vecchio formato { title, body, tokens }
-if (body.title && body.body) {
-  // prendi eventuali token dal payload, altrimenti da RTDB
-  let tokensRaw = Array.isArray(body.tokens) ? body.tokens : null;
-  if (!tokensRaw || !tokensRaw.length) {
-    tokensRaw = await fetchAllTokensFromRTDB();
-  }
-
-  // ⬇️ DEDUPLICA token
-  const uniqueTokens = Array.from(new Set((tokensRaw || []).filter(Boolean)));
-  if (!uniqueTokens.length) {
-    return { statusCode: 200, body: 'Nessun token registrato' };
-  }
-
-  const notif = { title: body.title, body: body.body, link: '/' };
-  const accessToken = await getAccessToken();
-
-  const results = await Promise.all(uniqueTokens.map(async (t) => {
-    try {
-      const r = await sendToToken(accessToken, t, notif);
-      await logResult(t, true);
-      return r;
-    } catch (e) {
-      await logResult(t, false, e.message);
-      return { error: e.message, token: t };
+      const notif = { title: body.title, body: body.body, link: '/' };
+      const accessToken = await getAccessToken();
+      const results = await Promise.all(tokens.map(async t => {
+        try {
+          const r = await sendToToken(accessToken, t, notif);
+          await logResult(t, true);
+          return r;
+        } catch(e) {
+          await logResult(t, false, e.message);
+          return { error: e.message };
+        }
+      }));
+      const ok = results.filter(r => !r.error).length;
+      const ko = results.length - ok;
+      return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
     }
-  }));
-
-  const ok = results.filter(r => !r.error).length;
-  const ko = results.length - ok;
-  return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
-}
 
     return { statusCode: 400, body: 'Payload non valido (manca type oppure title/body)' };
   }catch(e){
     return { statusCode: 500, body: 'ERR: ' + (e && e.message || String(e)) };
   }
 };
-
-
-
-
