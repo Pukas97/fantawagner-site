@@ -278,17 +278,26 @@ function handleExpiry(key, a){
   if (expiredHandled.has(key)) return;
   expiredHandled.add(key);
   if (a.lastBidder && toNumber(a.bid) > 0) {
-    // auto-assegna
     assignmentsRef.push({
       player: a.player, role: a.role, team: a.team,
       price: toNumber(a.bid), winner: a.lastBidder, at: now()
     }, function(err){
-      if (err) { debug('auto-assign ERROR: ' + err.message); }
+      if (err) { debug('auto-assign ERROR: ' + (err && err.message || String(err))); return; }
+      db.ref('auctions/'+key).update({ status: 'closed' });
+    });
+  } else if (a.openedBy) {
+    // Nessun rilancio: assegna a chi ha aperto l'asta al prezzo di partenza (a.bid)
+    assignmentsRef.push({
+      player: a.player, role: a.role, team: a.team,
+      price: toNumber(a.bid), winner: a.openedBy, at: now()
+    }, function(err){
+      if (err) { debug('auto-assign (openedBy) ERROR: ' + (err && err.message || String(err))); return; }
       db.ref('auctions/'+key).update({ status: 'closed' });
     });
   } else {
-    // chiudi senza assegnazione
+    // Chiudi senza assegnare (fallback estremo)
     db.ref('auctions/'+key).update({ status: 'closed' });
+  });
   }
 }
 
@@ -350,6 +359,23 @@ window.resetEverything = function () {
   });
 };
 
+
+// === Notifiche per-asta: toggle locale ===
+window.toggleAuctionMute = function(key){
+  if (!currentTokenKey) {
+    alert('Per gestire le notifiche devi prima abilitare le push.');
+    try { enablePush(); } catch(e) {}
+    return;
+  }
+  const cur = !!(muteMap && muteMap[key]);
+  const next = !cur;
+  firebase.database().ref('tokens/' + currentTokenKey + '/mute/' + key).set(next).then(function(){
+    muteMap = Object.assign({}, muteMap, { [key]: next });
+    renderAuctions();
+  });
+};
+function isAuctionMuted(key){ return !!(muteMap && muteMap[key]); }
+
 // Render aste (SOLO aperte nel riquadro) + timer label
 function renderAuctions(){
   var box = el('auctionsList');
@@ -401,7 +427,12 @@ function renderAuctions(){
         <div class="row" style="margin-top:8px;">
           <button class="btn warn sm" onclick="assignAuction('${key}')">Chiudi e assegna</button>
           <span></span>
-        </div>`;
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button id="mute-${key}" class="btn sm" onclick="toggleAuctionMute('${key}')"></button>
+          <span></span>
+        </div>
+        `;
 
       // Timer placeholder
       var remain = (a.endAt||0) - now();
@@ -415,6 +446,14 @@ function renderAuctions(){
        <div class="last-bidder">Ultimo rilancio: <span class="who">${a.lastBidder||'—'}</span></div>
        ${controls}`;
       box.appendChild(card);
+      // aggiorna label pulsante notifiche
+      var mb = document.getElementById('mute-'+key);
+      if (mb) {
+        var off = isAuctionMuted(key);
+        mb.textContent = off ? 'Notifiche asta: OFF' : 'Notifiche asta: ON';
+        if (off) { mb.classList.remove('primary'); mb.classList.add('danger'); }
+        else { mb.classList.remove('danger'); mb.classList.add('primary'); }
+      }
     });
   }
 
@@ -458,6 +497,16 @@ window.addEventListener('DOMContentLoaded', function(){
 
   bindSettingsUI();
   loadCSV();
+  try{
+    var savedTokenKey = localStorage.getItem('fcmTokenKey');
+    if (savedTokenKey) {
+      currentTokenKey = savedTokenKey;
+      firebase.database().ref('tokens/' + currentTokenKey + '/mute').on('value', function(s){
+        muteMap = s.val() || {};
+        try { renderAuctions(); } catch(e){}
+      });
+    }
+  }catch(e){}
 });
 
 // Live listeners
@@ -555,6 +604,8 @@ function renderParticipants(assignList){
 
 // === 🔔 Push (ONE-SHOT, con de-dup via RTDB transactions) ===
 let fcmToken = null;
+let currentTokenKey = null;
+let muteMap = {};
 const messaging = firebase.messaging();
 
 if ('serviceWorker' in navigator) {
@@ -618,7 +669,7 @@ function notifyOpenOnce(key, a){
       const title = 'Asta aperta';
       const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
       // niente notifica locale: delego tutto alle push per evitare doppioni
-      sendPushToAll(title, body);
+      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
     }
   });
 }
@@ -638,7 +689,7 @@ function notifyBidOnce(key, a){
       if (a.status === 'open' && nextBid > 0) {
         const title = 'Nuovo rilancio';
         const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
-        sendPushToAll(title, body);
+        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
       }
     }
   });
@@ -661,84 +712,3 @@ auctionsRef.on('child_changed', function(snap){
 
 
 
-
-
-/* ==== SAFE ROSTER GUARDS (non-intrusive) ==== */
-(function(){
-  try {
-    const LIMITS = { P:3, D:8, C:8, A:6 };
-
-    function normRole(r){ return (r||'').toString().trim().charAt(0).toUpperCase(); }
-
-    function snapshot(me){
-      const own = {P:0,D:0,C:0,A:0};
-      const leading = {P:0,D:0,C:0,A:0};
-      try {
-        (window.assignmentsCache||[]).forEach(x => {
-          if (x && x.winner === me) {
-            const rr = normRole(x.role);
-            if (rr && own.hasOwnProperty(rr)) own[rr]++;
-          }
-        });
-        const ac = window.auctionsCache || {};
-        Object.keys(ac).forEach(k => {
-          const a = ac[k];
-          if (a && a.status === 'open' && a.lastBidder === me) {
-            const rr = normRole(a.role);
-            if (rr && leading.hasOwnProperty(rr)) leading[rr]++;
-          }
-        });
-      } catch(e){ /* be permissive */ }
-      return { own, leading };
-    }
-
-    function canLeadMore(me, role, key){
-      try {
-        const rr = normRole(role);
-        const limit = LIMITS[rr] ?? 99;
-        const { own, leading } = snapshot(me);
-        // Se sei già vincente su questa asta, non aumenta il conteggio
-        const alreadyLeader = !!(window.auctionsCache && window.auctionsCache[key] && window.auctionsCache[key].lastBidder === me);
-        const currentLeading = (leading[rr]||0) - (alreadyLeader ? 1 : 0);
-        return ((own[rr]||0) + currentLeading + 1) <= limit;
-      } catch(e){ return true; }
-    }
-
-    if (typeof window.raiseBid === 'function') {
-      const _origRaise = window.raiseBid;
-      window.raiseBid = function(key, amount){
-        try {
-          var me = (document.getElementById('myName')?.value || '').trim() || 'Anonimo';
-          var a  = window.auctionsCache && window.auctionsCache[key];
-          if (a && a.status === 'open' && a.lastBidder !== me) {
-            if (!canLeadMore(me, a.role, key)) {
-              alert('Hai già raggiunto il massimo potenziale per questo ruolo. Attendi di essere superato in un\'altra asta.');
-              return;
-            }
-          }
-        } catch(e){ /* permissive */ }
-        return _origRaise.apply(this, arguments);
-      };
-    }
-
-    if (typeof window.customBid === 'function') {
-      const _origCustom = window.customBid;
-      window.customBid = function(key){
-        try {
-          var me = (document.getElementById('myName')?.value || '').trim() || 'Anonimo';
-          var a  = window.auctionsCache && window.auctionsCache[key];
-          if (a && a.status === 'open' && a.lastBidder !== me) {
-            if (!canLeadMore(me, a.role, key)) {
-              alert('Hai già raggiunto il massimo potenziale per questo ruolo. Attendi di essere superato in un\'altra asta.');
-              return;
-            }
-          }
-        } catch(e){ /* permissive */ }
-        return _origCustom.apply(this, arguments);
-      };
-    }
-  } catch(e) {
-    console.error('[roster-guards] disabled due to error', e);
-  }
-})();
-/* ==== END SAFE ROSTER GUARDS ==== */
