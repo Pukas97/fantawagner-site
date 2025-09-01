@@ -12,40 +12,35 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Background push (Android/Safari)
-// Mostra manualmente SOLO se non c'è il blocco "notification" nel payload
+// Mostra manualmente SOLO se il payload NON ha già "notification" (evita doppioni)
 messaging.onBackgroundMessage((payload) => {
   const hasNotificationBlock = !!payload.notification;
   const title = (payload.notification?.title || payload.data?.title || 'Notifica Asta');
   const body  = (payload.notification?.body  || payload.data?.body  || '');
+  const link  = (payload.fcmOptions?.link || payload.data?.link || '/');
 
   if (!hasNotificationBlock) {
     const options = {
       body,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
+      data: { url: link }
     };
     self.registration.showNotification(title, options);
   }
 });
 
-
-// Focus sull’app al tap della notifica
-self.addEventListener('notificationclick', function(event) {
+// Click sulla notifica: apri/porta in primo piano la pagina
+self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const urlToOpen = new URL('/', self.location.origin).href;
+  const urlToOpen = (event.notification?.data && event.notification.data.url) || '/';
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
-      for (let client of windowClients) {
-        if (client.url === urlToOpen && 'focus' in client) {
-          return client.focus();
-        }
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if (client.url === urlToOpen && 'focus' in client) return client.focus();
       }
-      if (clients.openWindow) {
-        return clients.openWindow(urlToOpen);
-      }
+      if (clients.openWindow) return clients.openWindow(urlToOpen);
     })
   );
 });
-
