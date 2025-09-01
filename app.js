@@ -219,6 +219,7 @@ function startAuctionFromRow(r){
     status: 'open',
     createdAt: now(),
     endAt: endAt
+    openedByName: openedBy // 👈 nuovo campo
   }, function(err){
     if (err) { debug('create auction ERROR: ' + err.message); }
   });
@@ -652,4 +653,5 @@ auctionsRef.on('child_changed', function(snap){
     notifyBidOnce(snap.key, a);
   }
 });
+
 
