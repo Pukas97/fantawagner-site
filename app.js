@@ -547,7 +547,7 @@ function renderParticipants(assignList){
   });
 }
 
-// === 🔔 Push (INVARIATO)
+// === 🔔 Push (ONE-SHOT, con de-dup via RTDB transactions) ===
 let fcmToken = null;
 const messaging = firebase.messaging();
 
@@ -585,28 +585,13 @@ window.enablePush = async function(){
   }
 };
 
-function showLocalNotification(title, body){
-  try {
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== 'granted') return;
-    new Notification(title, { body: body });
-  } catch(e){}
-}
-
-async function fetchAllTokens(){
-  const snap = await firebase.database().ref('tokens').once('value');
-  const val = snap.val() || {};
-  return Object.values(val).map(x => x.token).filter(Boolean);
-}
-
+// Invio centralizzato via Netlify function (già esistente)
 async function sendPushToAll(title, body){
   try {
-    const tokens = await fetchAllTokens();
-    if (!tokens.length) { debug('Nessun token registrato'); return; }
     const res = await fetch('/.netlify/functions/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, body, tokens })
+      body: JSON.stringify({ title, body })
     });
     const j = await res.json().catch(()=> ({}));
     debug('notify status ' + res.status + ' -> ' + JSON.stringify(j));
@@ -615,28 +600,56 @@ async function sendPushToAll(title, body){
   }
 }
 
+// Notifica apertura UNA SOLA VOLTA per asta (usa transazione "notifOpenAt")
+function notifyOpenOnce(key, a){
+  const ts = Date.now();
+  const ref = firebase.database().ref('auctions/'+key+'/notifOpenAt');
+
+  ref.transaction(cur => cur || ts, function(error, committed, snapshot){
+    if (error) { debug('tx notifOpenAt ERROR: ' + error.message); return; }
+    // invia solo se questa tab ha "vinto" la transazione (snapshot === ts impostato ora)
+    if (committed && snapshot && Number(snapshot.val()) === ts) {
+      const title = 'Asta aperta';
+      const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
+      // niente notifica locale: delego tutto alle push per evitare doppioni
+      sendPushToAll(title, body);
+    }
+  });
+}
+
+// Notifica rilancio UNA SOLA VOLTA per ogni nuova cifra (campo "lastNotifiedBid")
+function notifyBidOnce(key, a){
+  const ref = firebase.database().ref('auctions/'+key+'/lastNotifiedBid');
+  const nextBid = toNumber(a.bid);
+
+  ref.transaction(cur => {
+    const current = toNumber(cur);
+    // avanza soltanto se il bid corrente è davvero maggiore
+    return nextBid > current ? nextBid : undefined; // undefined => abort
+  }, function(error, committed, snapshot){
+    if (error) { debug('tx lastNotifiedBid ERROR: ' + error.message); return; }
+    if (committed && toNumber(snapshot && snapshot.val()) === nextBid) {
+      if (a.status === 'open' && nextBid > 0) {
+        const title = 'Nuovo rilancio';
+        const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
+        sendPushToAll(title, body);
+      }
+    }
+  });
+}
+
+// Listener "one-shot"
 auctionsRef.on('child_added', function(snap){
   const a = snap.val();
   if (a && a.status === 'open') {
-    const title = 'Asta aperta';
-    const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
-    showLocalNotification(title, body);
-    sendPushToAll(title, body);
+    notifyOpenOnce(snap.key, a);
   }
 });
 
 auctionsRef.on('child_changed', function(snap){
   const a = snap.val();
-  const prev = (auctionsCache && auctionsCache[snap.key]) || {};
-  if (a && a.status === 'open' && Number(a.bid||0) > Number(prev.bid||0)) {
-    const title = 'Nuovo rilancio';
-    const body  = a.player + ' a ' + a.bid + ' (da ' + (a.lastBidder||'') + ')';
-    showLocalNotification(title, body);
-    sendPushToAll(title, body);
+  if (a && a.status === 'open') {
+    notifyBidOnce(snap.key, a);
   }
 });
-
-// Mantieni cache aggiornata
-auctionsRef.on('value', function(s){ auctionsCache = s.val() || {}; });
-
 
