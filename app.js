@@ -208,6 +208,9 @@ function startAuctionFromRow(r){
   var startBid = toNumber(quota);
   if (isLockedPlayer(player)) return;
 
+  // 👇 prendi il nome dalla UI
+  var openedBy = (el('myName')?.value || '').trim() || 'Anonimo';
+
   var endAt = now() + Math.max(1, parseInt(timerMinutes,10)||1) * 60000;
 
   auctionsRef.push({
@@ -216,6 +219,7 @@ function startAuctionFromRow(r){
     team: team,
     bid: startBid,
     lastBidder: '',
+    openedBy: openedBy,          // 👈 NUOVO CAMPO
     status: 'open',
     createdAt: now(),
     endAt: endAt
@@ -223,6 +227,7 @@ function startAuctionFromRow(r){
     if (err) { debug('create auction ERROR: ' + err.message); }
   });
 }
+
 
 // Bids
 window.raiseBid = function(key, amount){
@@ -652,4 +657,5 @@ auctionsRef.on('child_changed', function(snap){
     notifyBidOnce(snap.key, a);
   }
 });
+
 
