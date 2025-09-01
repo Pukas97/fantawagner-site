@@ -274,12 +274,16 @@ function startAuctionFromRow(r){
 
 // Bids
 window.raiseBid = function(key, amount){
-  // Guard capienza per ruolo
-  if (!canLeadMore(me, a.role, key)) { alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Libera una delle aste dove sei vincente o attendi di essere superato.'); return; }
 
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
-  var next = toNumber(a.bid) + amount;
+  
+  // Guard capienza per ruolo (dopo aver definito me & a)
+  if (!canLeadMore(me, a.role, key)) {
+    alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Attendi di essere superato in un'altra asta.');
+    return;
+  }
+var next = toNumber(a.bid) + amount;
 
   // Estensione sotto 60s
   var endAt = a.endAt || (a.createdAt ? a.createdAt + timerMinutes*60000 : now()+timerMinutes*60000);
@@ -292,12 +296,16 @@ window.raiseBid = function(key, amount){
 };
 
 window.customBid = function(key){
-  // Guard capienza per ruolo
-  if (!canLeadMore(me, a.role, key)) { alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Libera una delle aste dove sei vincente o attendi di essere superato.'); return; }
 
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
-  var val = toNumber(document.getElementById('manualBid-'+key).value); if (!val) return;
+  
+  // Guard capienza per ruolo (dopo aver definito me & a)
+  if (!canLeadMore(me, a.role, key)) {
+    alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Attendi di essere superato in un'altra asta.');
+    return;
+  }
+var val = toNumber(document.getElementById('manualBid-'+key).value); if (!val) return;
 
   var endAt = a.endAt || (a.createdAt ? a.createdAt + timerMinutes*60000 : now()+timerMinutes*60000);
   var remain = endAt - now();
@@ -707,4 +715,6 @@ auctionsRef.on('child_changed', function(snap){
     notifyBidOnce(snap.key, a);
   }
 });
+
+
 
