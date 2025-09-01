@@ -137,7 +137,7 @@ function parseCSV(text){
   var sep = ',';
   if (text.indexOf('\t')>-1 && text.indexOf(';')===-1 && text.indexOf(',')===-1) sep='\t';
   else if (text.indexOf(';')>-1 && text.indexOf(',')===-1) sep=';';
-  var lines = text split(/\r?\n/).filter(Boolean);
+  var lines = text.split(/\r?\n/).filter(Boolean);
   if (!lines.length) return;
   headers = lines[0].split(sep).map(function(h){ return h.trim(); });
   rows = lines.slice(1).map(function(line){
@@ -210,7 +210,6 @@ function startAuctionFromRow(r){
 
   var endAt = now() + Math.max(1, parseInt(timerMinutes,10)||1) * 60000;
 
-  var meOpen = el('myName').value.trim() || 'Anonimo';
   auctionsRef.push({
     player: player,
     role: role,
@@ -219,9 +218,7 @@ function startAuctionFromRow(r){
     lastBidder: '',
     status: 'open',
     createdAt: now(),
-    endAt: endAt,
-    openedByName: meOpen,                       // NEW
-    openedByTokenKey: (window.myTokenKey || '') // NEW
+    endAt: endAt
   }, function(err){
     if (err) { debug('create auction ERROR: ' + err.message); }
   });
@@ -236,15 +233,11 @@ window.raiseBid = function(key, amount){
   // Estensione sotto 60s
   var endAt = a.endAt || (a.createdAt ? a.createdAt + timerMinutes*60000 : now()+timerMinutes*60000);
   var remain = endAt - now();
-  var patch = { bid: next, lastBidder: me, lastBidderTokenKey: (window.myTokenKey || '') }; // NEW
+  var patch = { bid: next, lastBidder: me };
   if (remain <= 60000 && extendSeconds > 0) {
     patch.endAt = endAt + (extendSeconds*1000);
   }
   db.ref('auctions/'+key).update(patch);
-  // iscrivi chi rilancia tra i partecipanti dell'asta (per targeting successive notifiche)
-  if (window.myTokenKey) {
-    db.ref('auctions/'+key+'/participants/'+window.myTokenKey).update({ name: me, joinedAt: now() });
-  }
 };
 
 window.customBid = function(key){
@@ -254,14 +247,11 @@ window.customBid = function(key){
 
   var endAt = a.endAt || (a.createdAt ? a.createdAt + timerMinutes*60000 : now()+timerMinutes*60000);
   var remain = endAt - now();
-  var patch = { bid: val, lastBidder: me, lastBidderTokenKey: (window.myTokenKey || '') }; // NEW
+  var patch = { bid: val, lastBidder: me };
   if (remain <= 60000 && extendSeconds > 0) {
     patch.endAt = endAt + (extendSeconds*1000);
   }
   db.ref('auctions/'+key).update(patch);
-  if (window.myTokenKey) {
-    db.ref('auctions/'+key+'/participants/'+window.myTokenKey).update({ name: me, joinedAt: now() });
-  }
   document.getElementById('manualBid-'+key).value = '';
 };
 
@@ -415,7 +405,6 @@ function renderAuctions(){
 
       card.innerHTML =
         `<div><strong>${a.player}</strong> <span class="muted">(${a.role||'—'}, ${a.team||''})</span> • ${timerSpan}</div>
-         <div class="opener muted">Aperta da: <span class="who">${a.openedByName || '—'}</span></div> <!-- NEW -->
          <div class="price">${a.bid||0}</div>
          <div class="last-bidder">Ultimo rilancio: <span class="who">${a.lastBidder||'—'}</span></div>
          ${controls}`;
@@ -582,7 +571,6 @@ window.enablePush = async function(){
     debug('FCM token ok');
 
     const tokenKey = token.replace(/[^a-zA-Z0-9_-]/g, '');
-    window.myTokenKey = tokenKey; // NEW: serve per targeting notifiche
     await firebase.database().ref('tokens/' + tokenKey).set({
       token: token,
       user: (document.getElementById('myName').value || 'Anonimo'),
@@ -612,21 +600,6 @@ async function sendPushToAll(title, body){
   }
 }
 
-// Invio targettizzato verso specifici tokenKeys (risolti lato server in token FCM)
-async function sendPushToTargets(tokenKeys, title, body){
-  try {
-    const res = await fetch('/.netlify/functions/notify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, body, tokenKeys })
-    });
-    const txt = await res.text();
-    debug('notify targeted ' + res.status + ' -> ' + txt);
-  } catch (e) {
-    debug('notify targeted ERROR: ' + (e && e.message || String(e)));
-  }
-}
-
 // Notifica apertura UNA SOLA VOLTA per asta (usa transazione "notifOpenAt")
 function notifyOpenOnce(key, a){
   const ts = Date.now();
@@ -637,50 +610,31 @@ function notifyOpenOnce(key, a){
     // invia solo se questa tab ha "vinto" la transazione (snapshot === ts impostato ora)
     if (committed && snapshot && Number(snapshot.val()) === ts) {
       const title = 'Asta aperta';
-      const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ') — da ' + (a.openedByName || '—'); // NEW
+      const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
       // niente notifica locale: delego tutto alle push per evitare doppioni
       sendPushToAll(title, body);
     }
   });
 }
 
-// Notifica rilancio UNA SOLA VOLTA per ogni nuova cifra (targettizzata)
+// Notifica rilancio UNA SOLA VOLTA per ogni nuova cifra (campo "lastNotifiedBid")
 function notifyBidOnce(key, a){
-  const bidderName = (a && a.lastBidder || '').trim();
-  const bidderKey  = (a && a.lastBidderTokenKey || '').trim();
-  const nextBid    = toNumber(a && a.bid);
-
-  // evita falsi rilanci: serve offerente e bid > 0 con asta aperta
-  if (!(a && a.status === 'open' && bidderName && nextBid > 0)) return;
-
   const ref = firebase.database().ref('auctions/'+key+'/lastNotifiedBid');
+  const nextBid = toNumber(a.bid);
 
   ref.transaction(cur => {
     const current = toNumber(cur);
-    // notifica solo una volta per cifra
+    // avanza soltanto se il bid corrente è davvero maggiore
     return nextBid > current ? nextBid : undefined; // undefined => abort
   }, function(error, committed, snapshot){
     if (error) { debug('tx lastNotifiedBid ERROR: ' + error.message); return; }
-    if (!(committed && toNumber(snapshot && snapshot.val()) === nextBid)) return;
-
-    // destinatari: partecipanti (chi ha già rilanciato), escluso il rilanciante
-    // se non ci sono partecipanti -> solo l'apritore
-    firebase.database().ref('auctions/'+key+'/participants').once('value')
-      .then(function(s){
-        const parts = s.val() || {};
-        let tokenKeys = Object.keys(parts).filter(k => k && k !== bidderKey);
-
-        if (!tokenKeys.length) {
-          const openerKey = (a.openedByTokenKey || '');
-          if (openerKey && openerKey !== bidderKey) tokenKeys = [openerKey];
-        }
-        if (!tokenKeys.length) return; // nessuno da notificare
-
+    if (committed && toNumber(snapshot && snapshot.val()) === nextBid) {
+      if (a.status === 'open' && nextBid > 0) {
         const title = 'Nuovo rilancio';
-        const body  = a.player + ' a ' + nextBid + ' (da ' + bidderName + ')';
-        sendPushToTargets(tokenKeys, title, body);
-      })
-      .catch(function(e){ debug('read participants ERROR: ' + (e && e.message || String(e))); });
+        const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
+        sendPushToAll(title, body);
+      }
+    }
   });
 }
 
@@ -698,3 +652,4 @@ auctionsRef.on('child_changed', function(snap){
     notifyBidOnce(snap.key, a);
   }
 });
+
