@@ -734,20 +734,28 @@ function notifyOpenOnce(key, a){
     if(!a || a.status !== 'open') return;
     if(!window._openNotified) window._openNotified = {};
     if(window._openNotified[key]) return;
-    window._openNotified[key] = true;
 
-    var title = 'Asta aperta';
-    var who = a.openedBy || 'Anonimo';
-    var role = a.role || '';
-    var team = a.team ? (' - ' + a.team) : '';
-    var body = (a.player || 'Giocatore') + (role ? (' ('+role+')') : '') + team + ' • base €' + toNumber(a.bid) + ' • da ' + who;
+    var me = (el('myName')?.value || 'Anonimo').trim();
+    var lockRef = db.ref('notifications/open/' + key);
+    lockRef.transaction(function(curr){
+      return curr ? curr : { at: now(), by: me };
+    }, function(err, committed){
+      if (err || !committed) return;
 
-    // Invia payload esplicito al backend push
-    fetch('/.netlify/functions/notify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: title, body: body })
-    }).catch(function(e){ /* noop */ });
+      window._openNotified[key] = true;
+
+      var title = 'Asta aperta';
+      var who = a.openedBy || 'Anonimo';
+      var role = a.role || '';
+      var team = a.team ? (' - ' + a.team) : '';
+      var body = (a.player || 'Giocatore') + (role ? (' ('+role+')') : '') + team + ' • base €' + toNumber(a.bid) + ' • da ' + who;
+
+      fetch('/.netlify/functions/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title, body: body })
+      }).catch(function(e){ /* noop */ });
+    });
   }catch(e){ /* noop */ }
 }
 
@@ -756,22 +764,32 @@ function notifyBidOnce(key, a){
   try{
     if(!a || a.status !== 'open') return;
     if(!window._bidNotified) window._bidNotified = {};
-    // compone un hash per evitare notifiche duplicate allo stesso valore
-    var signature = key + '|' + toNumber(a.bid);
+    var amount = toNumber(a.bid);
+    if(!amount) return;
+    var signature = key + '|' + amount;
     if(window._bidNotified[signature]) return;
-    window._bidNotified[signature] = true;
 
-    var title = 'Nuovo rilancio';
-    var who = a.lastBidder || 'Anonimo';
-    var role = a.role || '';
-    var team = a.team ? (' - ' + a.team) : '';
-    var body = (a.player || 'Giocatore') + (role ? (' ('+role+')') : '') + team + ' • €' + toNumber(a.bid) + ' • da ' + who;
+    var me = (el('myName')?.value || 'Anonimo').trim();
+    var lockRef = db.ref('notifications/bids/' + key + '/' + amount);
+    lockRef.transaction(function(curr){
+      return curr ? curr : { at: now(), by: me };
+    }, function(err, committed){
+      if (err || !committed) return;
 
-    fetch('/.netlify/functions/notify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: title, body: body })
-    }).catch(function(e){ /* noop */ });
+      window._bidNotified[signature] = true;
+
+      var title = 'Nuovo rilancio';
+      var who = a.lastBidder || 'Anonimo';
+      var role = a.role || '';
+      var team = a.team ? (' - ' + a.team) : '';
+      var body = (a.player || 'Giocatore') + (role ? (' ('+role+')') : '') + team + ' • €' + amount + ' • da ' + who;
+
+      fetch('/.netlify/functions/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title, body: body })
+      }).catch(function(e){ /* noop */ });
+    });
   }catch(e){ /* noop */ }
 }
 
