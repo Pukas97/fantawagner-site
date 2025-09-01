@@ -730,67 +730,40 @@ async function sendPushToAll(title, body){
 
 // Notifica apertura UNA SOLA VOLTA per asta (usa transazione "notifOpenAt")
 function notifyOpenOnce(key, a){
-  try{
-    if(!a || a.status !== 'open') return;
-    if(!window._openNotified) window._openNotified = {};
-    if(window._openNotified[key]) return;
+  const ts = Date.now();
+  const ref = firebase.database().ref('auctions/'+key+'/notifOpenAt');
 
-    var me = (el('myName')?.value || 'Anonimo').trim();
-    var lockRef = db.ref('notifications/open/' + key);
-    lockRef.transaction(function(curr){
-      return curr ? curr : { at: now(), by: me };
-    }, function(err, committed){
-      if (err || !committed) return;
-
-      window._openNotified[key] = true;
-
-      var title = 'Asta aperta';
-      var who = a.openedBy || 'Anonimo';
-      var role = a.role || '';
-      var team = a.team ? (' - ' + a.team) : '';
-      var body = (a.player || 'Giocatore') + (role ? (' ('+role+')') : '') + team + ' • base €' + toNumber(a.bid) + ' • da ' + who;
-
-      fetch('/.netlify/functions/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title, body: body })
-      }).catch(function(e){ /* noop */ });
-    });
-  }catch(e){ /* noop */ }
+  ref.transaction(cur => cur || ts, function(error, committed, snapshot){
+    if (error) { debug('tx notifOpenAt ERROR: ' + error.message); return; }
+    // invia solo se questa tab ha "vinto" la transazione (snapshot === ts impostato ora)
+    if (committed && snapshot && Number(snapshot.val()) === ts) {
+      const title = 'Asta aperta';
+      const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
+      // niente notifica locale: delego tutto alle push per evitare doppioni
+      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+    }
+  });
 }
 
 // Notifica rilancio UNA SOLA VOLTA per ogni nuova cifra (campo "lastNotifiedBid")
 function notifyBidOnce(key, a){
-  try{
-    if(!a || a.status !== 'open') return;
-    if(!window._bidNotified) window._bidNotified = {};
-    var amount = toNumber(a.bid);
-    if(!amount) return;
-    var signature = key + '|' + amount;
-    if(window._bidNotified[signature]) return;
+  const ref = firebase.database().ref('auctions/'+key+'/lastNotifiedBid');
+  const nextBid = toNumber(a.bid);
 
-    var me = (el('myName')?.value || 'Anonimo').trim();
-    var lockRef = db.ref('notifications/bids/' + key + '/' + amount);
-    lockRef.transaction(function(curr){
-      return curr ? curr : { at: now(), by: me };
-    }, function(err, committed){
-      if (err || !committed) return;
-
-      window._bidNotified[signature] = true;
-
-      var title = 'Nuovo rilancio';
-      var who = a.lastBidder || 'Anonimo';
-      var role = a.role || '';
-      var team = a.team ? (' - ' + a.team) : '';
-      var body = (a.player || 'Giocatore') + (role ? (' ('+role+')') : '') + team + ' • €' + amount + ' • da ' + who;
-
-      fetch('/.netlify/functions/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title, body: body })
-      }).catch(function(e){ /* noop */ });
-    });
-  }catch(e){ /* noop */ }
+  ref.transaction(cur => {
+    const current = toNumber(cur);
+    // avanza soltanto se il bid corrente è davvero maggiore
+    return nextBid > current ? nextBid : undefined; // undefined => abort
+  }, function(error, committed, snapshot){
+    if (error) { debug('tx lastNotifiedBid ERROR: ' + error.message); return; }
+    if (committed && toNumber(snapshot && snapshot.val()) === nextBid) {
+      if (a.status === 'open' && nextBid > 0) {
+        const title = 'Nuovo rilancio';
+        const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
+        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+      }
+    }
+  });
 }
 
 // Listener "one-shot"
