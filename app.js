@@ -58,60 +58,7 @@ var assignmentsCache = [];
 var auctionsCache = {}; // key -> auction
 var openPlayersSet = new Set();
 var closedPlayersSet = new Set();
-var expiredHandled = new Set();
-
-// === Limiti rosa per ruolo
-const ROLE_LIMITS = { P: 3, D: 8, C: 8, A: 6 };
-
-function roleKeyOf(role){
-  var r = String(role || '').trim().toUpperCase();
-  if (r === 'P' || r.startsWith('POR')) return 'P';
-  if (r === 'D' || r.startsWith('DIF')) return 'D';
-  if (r === 'C' || r.startsWith('CEN') || r.startsWith('MED')) return 'C';
-  if (r === 'A' || r.startsWith('ATT')) return 'A';
-  return null;
-}
-
-function computeRosterStatusFor(name){
-  var who = norm(name || '');
-  var assigned = { P:0, D:0, C:0, A:0 };
-  var winning  = { P:0, D:0, C:0, A:0 };
-
-  (assignmentsCache || []).forEach(function(a){
-    if (norm(a.winner || '') === who){
-      var rk = roleKeyOf(a.role);
-      if (rk) assigned[rk] += 1;
-    }
-  });
-
-  Object.values(auctionsCache || {}).forEach(function(a){
-    if (a && a.status === 'open' && norm(a.lastBidder || '') === who){
-      var rk = roleKeyOf(a.role);
-      if (rk) winning[rk] += 1;
-    }
-  });
-
-  return { assigned: assigned, winning: winning };
-}
-
-function canTakeLead(meName, auction){
-  var rk = roleKeyOf(auction.role);
-  if (!rk) return true;
-  var limits = ROLE_LIMITS[rk];
-  var s = computeRosterStatusFor(meName);
-  var giaVincenteQuesta = norm(auction.lastBidder || '') === norm(meName);
-  var extra = giaVincenteQuesta ? 0 : 1;
-  return (s.assigned[rk] + s.winning[rk] + extra) <= limits;
-}
-
-function canOpenForRole(meName, role){
-  var rk = roleKeyOf(role);
-  if (!rk) return true;
-  var limits = ROLE_LIMITS[rk];
-  var s = computeRosterStatusFor(meName);
-  return (s.assigned[rk] + s.winning[rk] + 1) <= limits;
-}
- // per evitare doppie chiusure
+var expiredHandled = new Set(); // per evitare doppie chiusure
 
 // Impostazioni locali (default)
 var timerMinutes = 2;   // durata nuove aste
@@ -259,14 +206,10 @@ function startAuctionFromRow(r){
   var team   = getField(r, ['Squadra','Team','Club']);
   var quota  = getField(r, ['Quotazione','quotazione','Quota','Prezzo']);
   var startBid = toNumber(quota);
-  if (isLockedPlayer(player)) return false;
+  if (isLockedPlayer(player)) return;
 
+  // 👇 prendi il nome dalla UI
   var openedBy = (el('myName')?.value || '').trim() || 'Anonimo';
-
-  if (!canOpenForRole(openedBy, role)){
-    alert('Non puoi aprire questa asta: raggiungeresti/supereresti il limite di ruolo.');
-    return false;
-  }
 
   var endAt = now() + Math.max(1, parseInt(timerMinutes,10)||1) * 60000;
 
@@ -275,27 +218,19 @@ function startAuctionFromRow(r){
     role: role,
     team: team,
     bid: startBid,
-    lastBidder: openedBy,
-    openedBy: openedBy,
+    lastBidder: '',
+    openedBy: openedBy,          // 👈 NUOVO CAMPO
     status: 'open',
     createdAt: now(),
     endAt: endAt
   }, function(err){
     if (err) { debug('create auction ERROR: ' + err.message); }
   });
-
-  return true;
 }
 
 
 // Bids
 window.raiseBid = function(key, amount){
-  var me = el('myName').value.trim() || 'Anonimo';
-  var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
-  if (!canTakeLead(me, a)){
-    alert('Non puoi rilanciare: raggiungeresti/supereresti il limite per questo ruolo.');
-    return;
-  }
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
   var next = toNumber(a.bid) + amount;
@@ -311,12 +246,6 @@ window.raiseBid = function(key, amount){
 };
 
 window.customBid = function(key){
-  var me = el('myName').value.trim() || 'Anonimo';
-  var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
-  if (!canTakeLead(me, a)){
-    alert('Non puoi rilanciare: raggiungeresti/supereresti il limite per questo ruolo.');
-    return;
-  }
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
   var val = toNumber(document.getElementById('manualBid-'+key).value); if (!val) return;
@@ -740,7 +669,7 @@ function notifyOpenOnce(key, a){
       const title = 'Asta aperta';
       const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
       // niente notifica locale: delego tutto alle push per evitare doppioni
-      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+      try { sendPushToAll(title, body) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
     }
   });
 }
@@ -757,10 +686,9 @@ function notifyBidOnce(key, a){
   }, function(error, committed, snapshot){
     if (error) { debug('tx lastNotifiedBid ERROR: ' + error.message); return; }
     if (committed && toNumber(snapshot && snapshot.val()) === nextBid) {
-      if (a.status === 'open' && nextBid > 0) {
-        const title = 'Nuovo rilancio';
+      if (a.status === 'open' && toNumber(a.bid) > 0) { const title = 'Nuovo rilancio';
         const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
-        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+        try { sendPushToAll(title, body) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
       }
     }
   });
