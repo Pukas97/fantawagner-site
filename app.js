@@ -350,6 +350,23 @@ window.resetEverything = function () {
   });
 };
 
+
+// === Notifiche per-asta: toggle locale ===
+window.toggleAuctionMute = function(key){
+  if (!currentTokenKey) {
+    alert('Per gestire le notifiche devi prima abilitare le push.');
+    try { enablePush(); } catch(e) {}
+    return;
+  }
+  const cur = !!(muteMap && muteMap[key]);
+  const next = !cur;
+  firebase.database().ref('tokens/' + currentTokenKey + '/mute/' + key).set(next).then(function(){
+    muteMap = Object.assign({}, muteMap, { [key]: next });
+    renderAuctions();
+  });
+};
+function isAuctionMuted(key){ return !!(muteMap && muteMap[key]); }
+
 // Render aste (SOLO aperte nel riquadro) + timer label
 function renderAuctions(){
   var box = el('auctionsList');
@@ -401,7 +418,12 @@ function renderAuctions(){
         <div class="row" style="margin-top:8px;">
           <button class="btn warn sm" onclick="assignAuction('${key}')">Chiudi e assegna</button>
           <span></span>
-        </div>`;
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button id="mute-${key}" class="btn sm" onclick="toggleAuctionMute('${key}')"></button>
+          <span></span>
+        </div>
+        `;
 
       // Timer placeholder
       var remain = (a.endAt||0) - now();
@@ -415,6 +437,14 @@ function renderAuctions(){
        <div class="last-bidder">Ultimo rilancio: <span class="who">${a.lastBidder||'—'}</span></div>
        ${controls}`;
       box.appendChild(card);
+      // aggiorna label pulsante notifiche
+      var mb = document.getElementById('mute-'+key);
+      if (mb) {
+        var off = isAuctionMuted(key);
+        mb.textContent = off ? 'Notifiche asta: OFF' : 'Notifiche asta: ON';
+        if (off) { mb.classList.remove('primary'); mb.classList.add('danger'); }
+        else { mb.classList.remove('danger'); mb.classList.add('primary'); }
+      }
     });
   }
 
@@ -458,6 +488,16 @@ window.addEventListener('DOMContentLoaded', function(){
 
   bindSettingsUI();
   loadCSV();
+  try{
+    var savedTokenKey = localStorage.getItem('fcmTokenKey');
+    if (savedTokenKey) {
+      currentTokenKey = savedTokenKey;
+      firebase.database().ref('tokens/' + currentTokenKey + '/mute').on('value', function(s){
+        muteMap = s.val() || {};
+        try { renderAuctions(); } catch(e){}
+      });
+    }
+  }catch(e){}
 });
 
 // Live listeners
@@ -555,6 +595,8 @@ function renderParticipants(assignList){
 
 // === 🔔 Push (ONE-SHOT, con de-dup via RTDB transactions) ===
 let fcmToken = null;
+let currentTokenKey = null;
+let muteMap = {};
 const messaging = firebase.messaging();
 
 if ('serviceWorker' in navigator) {
@@ -583,6 +625,15 @@ window.enablePush = async function(){
       ua: navigator.userAgent,
       at: Date.now()
     });
+    currentTokenKey = tokenKey;
+    localStorage.setItem('fcmToken', token);
+    localStorage.setItem('fcmTokenKey', currentTokenKey);
+    try{
+      firebase.database().ref('tokens/' + currentTokenKey + '/mute').on('value', function(s){
+        muteMap = s.val() || {};
+        try { renderAuctions(); } catch(e){}
+      });
+    }catch(e){}
 
     alert('Push abilitate su questo dispositivo ✔');
   } catch (e) {
@@ -618,7 +669,7 @@ function notifyOpenOnce(key, a){
       const title = 'Asta aperta';
       const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
       // niente notifica locale: delego tutto alle push per evitare doppioni
-      sendPushToAll(title, body);
+      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
     }
   });
 }
@@ -638,7 +689,7 @@ function notifyBidOnce(key, a){
       if (a.status === 'open' && nextBid > 0) {
         const title = 'Nuovo rilancio';
         const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
-        sendPushToAll(title, body);
+        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
       }
     }
   });
