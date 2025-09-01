@@ -53,13 +53,14 @@ async function fetchTokensRespectingMute(auctionKey, preferredKeys){
         try{
           const val = JSON.parse(String(data||'null')) || {};
           const keySet = preferredKeys && preferredKeys.length ? new Set(preferredKeys) : null;
-          const tokens = Object.entries(val).reduce((arr, [k, v]) => {
+          const tokensArr = Object.entries(val).reduce((arr, [k, v]) => {
             if (!v || !v.token) return arr;
             if (keySet && !keySet.has(k)) return arr;
             const muted = v.mute && auctionKey && (v.mute[auctionKey] === true);
             if (!muted) arr.push(v.token);
             return arr;
           }, []);
+          const tokens = Array.from(new Set(tokensArr));
           resolve(tokens);
         }catch(e){ reject(e); }
       });
@@ -76,9 +77,9 @@ function fetchTokensByKeys(keys){
       res.on('end', () => {
         try{
           const val = JSON.parse(String(data||'null')) || {};
-          const selected = Object.entries(val)
+          const selected = Array.from(new Set(Object.entries(val)
             .filter(([k, v]) => keySet.has(k) && v && v.token)
-            .map(([k, v]) => v.token);
+            .map(([k, v]) => v.token)));
           resolve(selected);
         }catch(e){ reject(e); }
       });
@@ -118,10 +119,6 @@ async function sendToToken(accessToken, token, notification){
   const body = {
     message: {
       token,
-      notification: {
-        title: notification.title,
-        body: notification.body
-      },
       webpush: {
         headers: { Urgency: 'high', TTL: '120' }, // TTL 120s
         notification: {
