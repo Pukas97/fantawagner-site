@@ -405,10 +405,11 @@ function renderAuctions(){
       var timerSpan = `<span id="timer-${key}" class="${cls}">${fmtMMSS(remain)}</span>`;
 
       card.innerHTML =
-        `<div><strong>${a.player}</strong> <span class="muted">(${a.role||'—'}, ${a.team||''})</span> • ${timerSpan}</div>
-         <div class="price">${a.bid||0}</div>
-         <div class="last-bidder">Ultimo rilancio: <span class="who">${a.lastBidder||'—'}</span></div>
-         ${controls}`;
+  `    <div><strong>${a.player}</strong> <span class="muted">(${a.role||'—'}, ${a.team||''})</span> • ${timerSpan}</div>
+       <div class="muted" style="margin:4px 0 0 0;">Asta aperta da <span class="pill">${a.openedByName||'—'}</span></div>
+       <div class="price">${a.bid||0}</div>
+       <div class="last-bidder">Ultimo rilancio: <span class="who">${a.lastBidder||'—'}</span></div>
+       ${controls}`;
       box.appendChild(card);
     });
   }
@@ -653,5 +654,6 @@ auctionsRef.on('child_changed', function(snap){
     notifyBidOnce(snap.key, a);
   }
 });
+
 
 
