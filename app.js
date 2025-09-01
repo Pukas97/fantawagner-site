@@ -256,39 +256,71 @@ window.customBid = function(key){
   });
 };
 
-// Reset open (UI sbloccata)
-window.resetOpenAuctions = function(){
-  if (!confirm('Sicuro di voler cancellare TUTTE le aste APERTE?')) return;
+// ⏱️ Chiudi e (se c'è un vincitore) assegna l'asta
+function handleExpiry(key, a){
+  a = a || auctionsCache[key];
+  if (!a) return;
+  if (expiredHandled.has(key)) return;
+  expiredHandled.add(key);
 
-  auctionsRef.once('value').then(function(s){
-    var val = s.val() || {};
-    var updates = {};
-    Object.keys(val).forEach(function(k){
-      if (val[k] && val[k].status === 'open'){
-        updates['/auctions/'+k] = null;
-        if (auctionsCache[k] && auctionsCache[k].status === 'open') delete auctionsCache[k];
+  var price  = Number(a.bid || 0);
+  var winner = a.lastBidder || '';
+
+  // chiudi l'asta
+  db.ref('auctions/' + key + '/status').set('closed')
+    .then(function(){
+      // se c'è un vincitore valido, registra l'assegnazione
+      if (price > 0 && winner){
+        return assignmentsRef.push({
+          player: a.player,
+          role: a.role,
+          team: a.team,
+          price: price,
+          winner: winner,
+          at: now()
+        });
       }
-    });
-
-    var doAfter = function(){
-      auctionsCache = {};
-      openPlayersSet.clear();
-      closedPlayersSet.clear();
+    })
+    .finally(function(){
+      // aggiorna UI locale
       renderAuctions();
       renderTable();
-    };
+    })
+    .catch(function(err){
+      debug('handleExpiry ERROR: ' + (err && err.message || String(err)));
+    });
+}
 
-    if (Object.keys(updates).length){
-      db.ref().update(updates).then(doAfter).catch(doAfter);
-    } else {
-      doAfter();
-    }
-  }).catch(function(){
+// 🖐️ Assegnazione manuale (bottone "Chiudi e assegna")
+window.assignAuction = function(key){
+  var a = auctionsCache[key];
+  if (!a || a.status !== 'open') return;
+  if (!confirm('Chiudere e assegnare questa asta?')) return;
+  handleExpiry(key, a);
+};
+
+// 🧹 Reset TOTALE (aste, assegnazioni, partecipanti, tokens)
+window.resetEverything = function () {
+  if (!confirm('⚠️ RESET TOTALE: cancella aste, assegnazioni e partecipanti. Confermi?')) return;
+
+  var updates = { auctions: null, assignments: null, participants: null, tokens: null };
+
+  db.ref().update(updates).then(function () {
     auctionsCache = {};
+    assignmentsCache = [];
+    participants = {};
     openPlayersSet.clear();
     closedPlayersSet.clear();
-    renderAuctions();
-    renderTable();
+    expiredHandled.clear();
+
+    var closed = document.getElementById('closedBox'); if (closed) closed.innerHTML = '';
+    var list   = document.getElementById('auctionsList'); if (list) list.innerHTML = '';
+    var left   = document.querySelector('#tbodyList'); if (left) left.innerHTML = '';
+    var parts  = document.querySelector('#participants'); if (parts) parts.innerHTML = '';
+
+    alert('Reset completato.');
+  }).catch(function (err) {
+    alert('Reset fallito: ' + (err && err.message || String(err)));
   });
 };
 
@@ -378,7 +410,10 @@ setInterval(function(){
       span.textContent = fmtMMSS(remain);
       span.className = remain <= 10000 ? 'timer danger' : (remain <= 60000 ? 'timer warn' : 'timer');
     }
-    // eventuale gestione scadenza lato UI lasciata com’è
+    // chiusura automatica allo scadere
+    if (remain <= 0) {
+      handleExpiry(key, a);
+    }
   });
 }, 1000);
 
