@@ -50,42 +50,6 @@ const extendSecondsRef  = db.ref('settings/extendSeconds');
 const START_BUDGET = 500;
 
 // === Stato
-// === Roster limits ===
-const ROSTER_LIMITS = { 'P': 3, 'D': 8, 'C': 8, 'A': 6 };
-
-function rosterSnapshot(me){
-  const own = {P:0,D:0,C:0,A:0};
-  const leading = {P:0,D:0,C:0,A:0};
-  try {
-    (assignmentsCache||[]).forEach(x => {
-      if (x && x.winner === me && x.role) { own[x.role] = (own[x.role]||0) + 1; }
-    });
-    Object.keys(auctionsCache||{}).forEach(k => {
-      const a = auctionsCache[k];
-      if (a && a.status === 'open' && a.lastBidder === me && a.role) {
-        leading[a.role] = (leading[a.role]||0) + 1;
-      }
-    });
-  } catch(e){}
-  return { own, leading };
-}
-
-function canLeadMore(me, role, key){
-  const limit = ROSTER_LIMITS[role] || 99;
-  const snap = rosterSnapshot(me);
-  const alreadyLeader = (auctionsCache[key] && auctionsCache[key].lastBidder === me);
-  const currentLeading = (snap.leading[role]||0) - (alreadyLeader ? 1 : 0);
-  // +1 è il nuovo "gettone" che stai provando a mettere su questa asta
-  return ( (snap.own[role]||0) + currentLeading + 1 ) <= limit;
-}
-
-function canOpenNew(me, role){
-  const limit = ROSTER_LIMITS[role] || 99;
-  const snap = rosterSnapshot(me);
-  // Non aprire nuove aste se non hai più "capienza potenziale"
-  return ( (snap.own[role]||0) + (snap.leading[role]||0) ) < limit;
-}
-
 var rows = [];
 var headers = [];
 var filterValue = '';
@@ -249,13 +213,6 @@ function startAuctionFromRow(r){
 
   var endAt = now() + Math.max(1, parseInt(timerMinutes,10)||1) * 60000;
 
-  // Guard capienza: blocca apertura se non hai slot disponibili per questo ruolo
-  var meOpen = (el('myName')?.value || '').trim() || 'Anonimo';
-  if (!canOpenNew(meOpen, role)) {
-    alert('Non puoi aprire una nuova asta per questo ruolo: raggiungeresti/sforeresti la rosa massima.');
-    return;
-  }
-
   auctionsRef.push({
     player: player,
     role: role,
@@ -274,16 +231,9 @@ function startAuctionFromRow(r){
 
 // Bids
 window.raiseBid = function(key, amount){
-
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
-  
-  // Guard capienza per ruolo (dopo aver definito me & a)
-  if (!canLeadMore(me, a.role, key)) {
-    alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Attendi di essere superato in un'altra asta.');
-    return;
-  }
-var next = toNumber(a.bid) + amount;
+  var next = toNumber(a.bid) + amount;
 
   // Estensione sotto 60s
   var endAt = a.endAt || (a.createdAt ? a.createdAt + timerMinutes*60000 : now()+timerMinutes*60000);
@@ -296,16 +246,9 @@ var next = toNumber(a.bid) + amount;
 };
 
 window.customBid = function(key){
-
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
-  
-  // Guard capienza per ruolo (dopo aver definito me & a)
-  if (!canLeadMore(me, a.role, key)) {
-    alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Attendi di essere superato in un'altra asta.');
-    return;
-  }
-var val = toNumber(document.getElementById('manualBid-'+key).value); if (!val) return;
+  var val = toNumber(document.getElementById('manualBid-'+key).value); if (!val) return;
 
   var endAt = a.endAt || (a.createdAt ? a.createdAt + timerMinutes*60000 : now()+timerMinutes*60000);
   var remain = endAt - now();
@@ -718,3 +661,84 @@ auctionsRef.on('child_changed', function(snap){
 
 
 
+
+
+/* ==== SAFE ROSTER GUARDS (non-intrusive) ==== */
+(function(){
+  try {
+    const LIMITS = { P:3, D:8, C:8, A:6 };
+
+    function normRole(r){ return (r||'').toString().trim().charAt(0).toUpperCase(); }
+
+    function snapshot(me){
+      const own = {P:0,D:0,C:0,A:0};
+      const leading = {P:0,D:0,C:0,A:0};
+      try {
+        (window.assignmentsCache||[]).forEach(x => {
+          if (x && x.winner === me) {
+            const rr = normRole(x.role);
+            if (rr && own.hasOwnProperty(rr)) own[rr]++;
+          }
+        });
+        const ac = window.auctionsCache || {};
+        Object.keys(ac).forEach(k => {
+          const a = ac[k];
+          if (a && a.status === 'open' && a.lastBidder === me) {
+            const rr = normRole(a.role);
+            if (rr && leading.hasOwnProperty(rr)) leading[rr]++;
+          }
+        });
+      } catch(e){ /* be permissive */ }
+      return { own, leading };
+    }
+
+    function canLeadMore(me, role, key){
+      try {
+        const rr = normRole(role);
+        const limit = LIMITS[rr] ?? 99;
+        const { own, leading } = snapshot(me);
+        // Se sei già vincente su questa asta, non aumenta il conteggio
+        const alreadyLeader = !!(window.auctionsCache && window.auctionsCache[key] && window.auctionsCache[key].lastBidder === me);
+        const currentLeading = (leading[rr]||0) - (alreadyLeader ? 1 : 0);
+        return ((own[rr]||0) + currentLeading + 1) <= limit;
+      } catch(e){ return true; }
+    }
+
+    if (typeof window.raiseBid === 'function') {
+      const _origRaise = window.raiseBid;
+      window.raiseBid = function(key, amount){
+        try {
+          var me = (document.getElementById('myName')?.value || '').trim() || 'Anonimo';
+          var a  = window.auctionsCache && window.auctionsCache[key];
+          if (a && a.status === 'open' && a.lastBidder !== me) {
+            if (!canLeadMore(me, a.role, key)) {
+              alert('Hai già raggiunto il massimo potenziale per questo ruolo. Attendi di essere superato in un\'altra asta.');
+              return;
+            }
+          }
+        } catch(e){ /* permissive */ }
+        return _origRaise.apply(this, arguments);
+      };
+    }
+
+    if (typeof window.customBid === 'function') {
+      const _origCustom = window.customBid;
+      window.customBid = function(key){
+        try {
+          var me = (document.getElementById('myName')?.value || '').trim() || 'Anonimo';
+          var a  = window.auctionsCache && window.auctionsCache[key];
+          if (a && a.status === 'open' && a.lastBidder !== me) {
+            if (!canLeadMore(me, a.role, key)) {
+              alert('Hai già raggiunto il massimo potenziale per questo ruolo. Attendi di essere superato in un\'altra asta.');
+              return;
+            }
+          }
+        } catch(e){ /* permissive */ }
+        return _origCustom.apply(this, arguments);
+      };
+    }
+  } catch(e) {
+    console.error('[roster-guards] disabled due to error', e);
+  }
+})();
+/* ==== END SAFE ROSTER GUARDS ==== */
