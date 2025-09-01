@@ -13,15 +13,22 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 // Background push (Android/Safari)
+// Mostra manualmente SOLO se non c'è il blocco "notification" nel payload
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || 'Notifica Asta';
-  const options = {
-    body: payload.notification?.body || '',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-  };
-  self.registration.showNotification(title, options);
+  const hasNotificationBlock = !!payload.notification;
+  const title = (payload.notification?.title || payload.data?.title || 'Notifica Asta');
+  const body  = (payload.notification?.body  || payload.data?.body  || '');
+
+  if (!hasNotificationBlock) {
+    const options = {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+    };
+    self.registration.showNotification(title, options);
+  }
 });
+
 
 // Focus sull’app al tap della notifica
 self.addEventListener('notificationclick', function(event) {
@@ -41,3 +48,4 @@ self.addEventListener('notificationclick', function(event) {
     })
   );
 });
+
