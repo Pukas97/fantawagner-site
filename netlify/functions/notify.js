@@ -43,20 +43,39 @@ function fetchAllTokensFromRTDB(){
   });
 }
 
+function fetchTokensByKeys(keys){
+  const keySet = new Set(keys || []);
+  if (!keySet.size) return Promise.resolve([]);
+  return new Promise((resolve, reject) => {
+    https.get(`${RTDB_URL}/tokens.json`, (res) => {
+      let data = '';
+      res.on('data', d => data += d);
+      res.on('end', () => {
+        try{
+          const val = JSON.parse(String(data||'null')) || {};
+          const selected = Object.entries(val)
+            .filter(([k, v]) => keySet.has(k) && v && v.token)
+            .map(([k, v]) => v.token);
+          resolve(selected);
+        }catch(e){ reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
 function buildNotificationFromType(type, payload){
   switch(type){
     case 'auction_open':
-      return { title: 'Asta aperta', body: `${payload.player} (${payload.role || '—'}) – base ${payload.bid} crediti`, link: '/' };
+      return { title: 'Asta aperta', body: `${payload.player} (${payload.role || '—'}${payload.team ? ', ' + payload.team : ''}) — da ${payload.openedByName || '—'}`, link: '/' };
     case 'bid':
       return { title: 'Nuovo rilancio', body: `${payload.player}: ${payload.bid} crediti da ${payload.bidder}`, link: '/' };
     case 'assigned':
-      return { title: 'Asta chiusa', body: `${payload.player} a ${payload.winner} per ${payload.price} crediti`, link: '/' };
+      return { title: 'Assegnato', body: `${payload.player} a ${payload.winner} per ${payload.bid} crediti`, link: '/' };
     default:
-      return { title: 'FantAsta', body: 'Aggiornamento', link: '/' };
+      return { title: String(type||'Notifica'), body: payload && payload.body || '', link: '/' };
   }
 }
 
-// 🔎 log esito per token (utile per capire gli errori Android)
 async function logResult(token, ok, err){
   try {
     const key = token.replace(/[^a-zA-Z0-9_-]/g, '');
@@ -71,7 +90,7 @@ async function logResult(token, ok, err){
   } catch {}
 }
 
-// ✅ PATCH compat Android: icon/badge/urgenza nel blocco webpush
+// HTTP helper using Node 18 fetch; Netlify supports global fetch in functions runtime
 async function sendToToken(accessToken, token, notification){
   const body = {
     message: {
@@ -88,19 +107,25 @@ async function sendToToken(accessToken, token, notification){
           icon: '/icons/icon-192.png',   // assicurati che esista
           badge: '/icons/icon-192.png',  // opzionale
           vibrate: [100, 50, 100],
-          requireInteraction: false
         },
-        fcmOptions: { link: notification.link || '/' }
+        fcm_options: {
+          link: notification.link || '/'
+        }
       }
     }
   };
+
   const resp = await fetch(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`, {
-    method:'POST',
-    headers:{ 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify(body)
   });
+
   if (!resp.ok) {
-    const txt = await resp.text();
+    const txt = await resp.text().catch(()=> '');
     throw new Error(`FCM ${resp.status}: ${txt}`);
   }
   return resp.json();
@@ -116,9 +141,16 @@ exports.handler = async (event) => {
     // Percorso 1: { type, payload }
     if (body.type) {
       const notif = buildNotificationFromType(body.type, body.payload || {});
-      const [accessToken, tokens] = await Promise.all([ getAccessToken(), fetchAllTokensFromRTDB() ]);
+      // preferisci target tokenKeys se presenti
+      let tokens = [];
+      if (Array.isArray(body.tokenKeys) && body.tokenKeys.length) {
+        tokens = await fetchTokensByKeys(body.tokenKeys);
+      } else {
+        tokens = await fetchAllTokensFromRTDB();
+      }
       if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
 
+      const accessToken = await getAccessToken();
       const results = await Promise.all(tokens.map(async t => {
         try {
           const r = await sendToToken(accessToken, t, notif);
@@ -134,15 +166,19 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: `Inviate: ${ok}, errori: ${ko}` };
     }
 
-    // Percorso 2: { title, body, tokens? }
+    // Percorso 2: { title, body, link?, tokenKeys? } oppure { title, body, tokens? }
     if (body.title && body.body) {
-      let tokens = Array.isArray(body.tokens) ? body.tokens.filter(Boolean) : null;
-      if (!tokens || tokens.length === 0) {
+      const notif = { title: body.title, body: body.body, link: body.link || '/' };
+
+      let tokens = Array.isArray(body.tokens) ? body.tokens : null;
+      if ((!tokens || !tokens.length) && Array.isArray(body.tokenKeys) && body.tokenKeys.length) {
+        tokens = await fetchTokensByKeys(body.tokenKeys);
+      }
+      if (!tokens || !tokens.length) {
         tokens = await fetchAllTokensFromRTDB();
       }
       if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
 
-      const notif = { title: body.title, body: body.body, link: '/' };
       const accessToken = await getAccessToken();
       const results = await Promise.all(tokens.map(async t => {
         try {
