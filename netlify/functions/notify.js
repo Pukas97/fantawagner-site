@@ -43,6 +43,29 @@ function fetchAllTokensFromRTDB(){
   });
 }
 
+
+async function fetchTokensRespectingMute(auctionKey, preferredKeys){
+  return new Promise((resolve, reject) => {
+    https.get(`${RTDB_URL}/tokens.json`, (res) => {
+      let data = '';
+      res.on('data', d => data += d);
+      res.on('end', () => {
+        try{
+          const val = JSON.parse(String(data||'null')) || {};
+          const keySet = preferredKeys && preferredKeys.length ? new Set(preferredKeys) : null;
+          const tokens = Object.entries(val).reduce((arr, [k, v]) => {
+            if (!v || !v.token) return arr;
+            if (keySet && !keySet.has(k)) return arr;
+            const muted = v.mute && auctionKey && (v.mute[auctionKey] === true);
+            if (!muted) arr.push(v.token);
+            return arr;
+          }, []);
+          resolve(tokens);
+        }catch(e){ reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
 function fetchTokensByKeys(keys){
   const keySet = new Set(keys || []);
   if (!keySet.size) return Promise.resolve([]);
@@ -141,12 +164,14 @@ exports.handler = async (event) => {
     // Percorso 1: { type, payload }
     if (body.type) {
       const notif = buildNotificationFromType(body.type, body.payload || {});
-      // preferisci target tokenKeys se presenti
+      const auctionKey = (body.payload && body.payload.auctionKey) || null;
+
+      // preferisci target tokenKeys se presenti; altrimenti rispetta i mute per asta
       let tokens = [];
       if (Array.isArray(body.tokenKeys) && body.tokenKeys.length) {
         tokens = await fetchTokensByKeys(body.tokenKeys);
       } else {
-        tokens = await fetchAllTokensFromRTDB();
+        tokens = await fetchTokensRespectingMute(auctionKey);
       }
       if (!tokens.length) return { statusCode: 200, body: 'Nessun token registrato' };
 
