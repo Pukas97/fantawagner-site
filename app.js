@@ -740,7 +740,7 @@ function notifyOpenOnce(key, a){
       const title = 'Asta aperta';
       const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
       // niente notifica locale: delego tutto alle push per evitare doppioni
-      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'bid', payload: { auctionKey: key, player: a.player, bid: nextBid, bidder: a.lastBidder || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
     }
   });
 }
@@ -760,7 +760,7 @@ function notifyBidOnce(key, a){
       if (a.status === 'open' && nextBid > 0) {
         const title = 'Nuovo rilancio';
         const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
-        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'bid', payload: { auctionKey: key, player: a.player, bid: nextBid, bidder: a.lastBidder || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
       }
     }
   });
