@@ -56,7 +56,59 @@
     /* Impostazioni timer */
     .settings { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items:end; }
     .settings .field { display:flex; flex-direction:column; gap:6px; }
-  </style>
+  
+/* === Mobile responsive tweaks === */
+@media (max-width: 640px) {
+  :root { --gap: 10px; }
+  header { padding: 12px 14px; }
+  header h1 { font-size: 16px; }
+
+  .container {
+    padding: 12px;
+    display: block;           /* stack left + right */
+  }
+
+  .card { padding: 12px; border-radius: 12px; }
+
+  /* Inputs & buttons bigger for touch */
+  input[type="text"], input[type="number"], select {
+    font-size: 16px;          /* avoid iOS zoom */
+    padding: 10px 12px;
+    border-radius: 10px;
+  }
+  .btn { padding: 12px 14px; border-radius: 12px; }
+  .btn.sm { padding: 10px 12px; font-size: 14px; }
+
+  /* Grids collapse */
+  .row { grid-template-columns: 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  /* If space is tight, allow wrapping to 2 rows gracefully */
+  .grid-3 > * { min-width: 0; }
+
+  /* Auction card hierarchy */
+  .auction-card { padding: 12px; }
+  .auction-card .price { font-size: 22px; }
+  .auction-card .last-bidder { font-size: 13px; }
+
+  /* Make the timer stand out */
+  .timer { font-size: 16px; }
+
+  /* Participants grid: single column cards */
+  .participants-grid { grid-template-columns: 1fr; }
+
+  /* Table: scroll on x with sticky header */
+  .card table { display: block; overflow-x: auto; white-space: nowrap; }
+  .card table th, .card table td { font-size: 13px; padding: 8px; }
+
+  /* Settings layout vertical */
+  .settings { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 380px) {
+  .grid-3 { grid-template-columns: 1fr 1fr; }
+  .grid-3 > :nth-child(3) { grid-column: 1 / -1; }
+}
+</style>
 
   <!-- Firebase libs -->
   <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js" defer></script>
