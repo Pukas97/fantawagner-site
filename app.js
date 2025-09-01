@@ -350,23 +350,6 @@ window.resetEverything = function () {
   });
 };
 
-
-// === Notifiche per-asta: toggle locale ===
-window.toggleAuctionMute = function(key){
-  if (!currentTokenKey) {
-    alert('Per gestire le notifiche devi prima abilitare le push.');
-    try { enablePush(); } catch(e) {}
-    return;
-  }
-  const cur = !!(muteMap && muteMap[key]);
-  const next = !cur;
-  firebase.database().ref('tokens/' + currentTokenKey + '/mute/' + key).set(next).then(function(){
-    muteMap = Object.assign({}, muteMap, { [key]: next });
-    renderAuctions();
-  });
-};
-function isAuctionMuted(key){ return !!(muteMap && muteMap[key]); }
-
 // Render aste (SOLO aperte nel riquadro) + timer label
 function renderAuctions(){
   var box = el('auctionsList');
@@ -381,6 +364,44 @@ function renderAuctions(){
 
   // FILTRO: mostra solo open
   var openKeys = keys.filter(function(k){ return auctionsCache[k] && auctionsCache[k].status === 'open'; });
+  // Toolbar ordinamento
+  var sortMode = localStorage.getItem('auctionSort') || 'time';
+  var toolbar = document.createElement('div');
+  toolbar.className = 'row between';
+  toolbar.style.margin = '0 0 10px 0';
+  toolbar.innerHTML = '<div class="muted">Aste aperte</div>' +
+    '<div class="row" style="gap:6px; align-items:center;">' +
+      '<label class="muted" for="auctionSort">Ordina per:</label>' +
+      '<select id="auctionSort" class="input sm">' +
+        '<option value="time">Scadenza</option>' +
+        '<option value="bid">Rilancio</option>' +
+      '</select>' +
+    '</div>';
+  box.appendChild(toolbar);
+  var sel = el('auctionSort');
+  if (sel) {
+    sel.value = sortMode;
+    sel.addEventListener('change', function(){
+      localStorage.setItem('auctionSort', this.value);
+      renderAuctions();
+    });
+  }
+  // Ordinamento openKeys
+  openKeys.sort(function(k1, k2){
+    var a1 = auctionsCache[k1] || {}; var a2 = auctionsCache[k2] || {};
+    var e1 = a1.endAt || ((a1.createdAt || now()) + Math.max(1, parseInt(timerMinutes||2,10))*60000);
+    var e2 = a2.endAt || ((a2.createdAt || now()) + Math.max(1, parseInt(timerMinutes||2,10))*60000);
+    if ((localStorage.getItem('auctionSort') || 'time') === 'bid') {
+      var b1 = toNumber(a1.bid)||0; var b2 = toNumber(a2.bid)||0;
+      if (b1 !== b2) return b2 - b1; // più alto prima
+      return e1 - e2;                // a parità di bid, prima chi scade prima
+    } else {
+      var r1 = e1 - now(); var r2 = e2 - now();
+      if (r1 !== r2) return r1 - r2; // prima chi scade prima
+      return (toNumber(a2.bid)||0) - (toNumber(a1.bid)||0); // tie-break: bid più alto
+    }
+  });
+
 
   if (!openKeys.length){
     var empty = document.createElement('div');
@@ -418,12 +439,7 @@ function renderAuctions(){
         <div class="row" style="margin-top:8px;">
           <button class="btn warn sm" onclick="assignAuction('${key}')">Chiudi e assegna</button>
           <span></span>
-        </div>
-        <div class="row" style="margin-top:8px;">
-          <button id="mute-${key}" class="btn sm" onclick="toggleAuctionMute('${key}')"></button>
-          <span></span>
-        </div>
-        `;
+        </div>`;
 
       // Timer placeholder
       var remain = (a.endAt||0) - now();
@@ -437,14 +453,6 @@ function renderAuctions(){
        <div class="last-bidder">Ultimo rilancio: <span class="who">${a.lastBidder||'—'}</span></div>
        ${controls}`;
       box.appendChild(card);
-      // aggiorna label pulsante notifiche
-      var mb = document.getElementById('mute-'+key);
-      if (mb) {
-        var off = isAuctionMuted(key);
-        mb.textContent = off ? 'Notifiche asta: OFF' : 'Notifiche asta: ON';
-        if (off) { mb.classList.remove('primary'); mb.classList.add('danger'); }
-        else { mb.classList.remove('danger'); mb.classList.add('primary'); }
-      }
     });
   }
 
@@ -488,16 +496,6 @@ window.addEventListener('DOMContentLoaded', function(){
 
   bindSettingsUI();
   loadCSV();
-  try{
-    var savedTokenKey = localStorage.getItem('fcmTokenKey');
-    if (savedTokenKey) {
-      currentTokenKey = savedTokenKey;
-      firebase.database().ref('tokens/' + currentTokenKey + '/mute').on('value', function(s){
-        muteMap = s.val() || {};
-        try { renderAuctions(); } catch(e){}
-      });
-    }
-  }catch(e){}
 });
 
 // Live listeners
@@ -595,8 +593,6 @@ function renderParticipants(assignList){
 
 // === 🔔 Push (ONE-SHOT, con de-dup via RTDB transactions) ===
 let fcmToken = null;
-let currentTokenKey = null;
-let muteMap = {};
 const messaging = firebase.messaging();
 
 if ('serviceWorker' in navigator) {
@@ -625,15 +621,6 @@ window.enablePush = async function(){
       ua: navigator.userAgent,
       at: Date.now()
     });
-    currentTokenKey = tokenKey;
-    localStorage.setItem('fcmToken', token);
-    localStorage.setItem('fcmTokenKey', currentTokenKey);
-    try{
-      firebase.database().ref('tokens/' + currentTokenKey + '/mute').on('value', function(s){
-        muteMap = s.val() || {};
-        try { renderAuctions(); } catch(e){}
-      });
-    }catch(e){}
 
     alert('Push abilitate su questo dispositivo ✔');
   } catch (e) {
@@ -669,7 +656,7 @@ function notifyOpenOnce(key, a){
       const title = 'Asta aperta';
       const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
       // niente notifica locale: delego tutto alle push per evitare doppioni
-      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+      sendPushToAll(title, body);
     }
   });
 }
@@ -689,7 +676,7 @@ function notifyBidOnce(key, a){
       if (a.status === 'open' && nextBid > 0) {
         const title = 'Nuovo rilancio';
         const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
-        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+        sendPushToAll(title, body);
       }
     }
   });
