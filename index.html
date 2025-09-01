@@ -108,7 +108,12 @@
   .grid-3 { grid-template-columns: 1fr 1fr; }
   .grid-3 > :nth-child(3) { grid-column: 1 / -1; }
 }
-</style>
+
+    /* Mobile admin mount spacing */
+    #adminMount { padding: 18px; }
+    @media (min-width: 701px) { #adminMount { display: none; } }
+
+  </style>
 
   <!-- Firebase libs -->
   <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js" defer></script>
@@ -120,7 +125,7 @@
 <body>
   <header>
     <h1>Asta Fantacalcio – Live</h1>
-    <div id="bootStatus" class="boot">JS non avviato</div>
+    <div id="bootStatus" class="boot">JS non avviato</section>
     <noscript><div class="boot" style="background:#ef4444;color:white;">JavaScript disattivato: attivalo per usare l'app</div></noscript>
   </header>
 
@@ -143,7 +148,8 @@
         </div>
 
         <div class="space"></div>
-        <div class="muted">Zona sicura (amministrazione)</div>
+        <div id="adminBox">
+<div class="muted">Zona sicura (amministrazione)</div>
         <div class="row" style="align-items:start;">
           <div class="stack">
             <div class="settings">
@@ -163,9 +169,11 @@
           </div>
         </div>
 
-        <div id="debugBox"></div>
+        
+</div>
+<div id="debugBox"></div>
       </div>
-    </section>
+    </div>
 
     <!-- Colonna destra (sopra): Listone -->
     <section class="card">
@@ -212,6 +220,35 @@
     </section>
   </div>
 
-  <div class="footer">Ogni partecipante parte da 500 crediti. Al momento dell'assegnazione, il costo viene sottratto dal budget residuo mostrato sotto al nome.</div>
+  
+  <!-- Mount point for admin on mobile -->
+  <div id="adminMount"></div>
+<div class="footer">Ogni partecipante parte da 500 crediti. Al momento dell'assegnazione, il costo viene sottratto dal budget residuo mostrato sotto al nome.</div>
+
+  <script>
+    (function() {
+      const adminBox = document.getElementById('adminBox');
+      if (!adminBox) return;
+      // original parent and sibling for restoring
+      const originalParent = adminBox.parentElement;
+      const originalNext = adminBox.nextElementSibling;
+      const mount = document.getElementById('adminMount');
+      function placeAdmin() {
+        const isPhone = window.matchMedia('(max-width: 700px)').matches;
+        if (isPhone && mount && adminBox.parentElement !== mount) {
+          mount.appendChild(adminBox); adminBox.classList.add("card");
+        } else if (!isPhone && adminBox.parentElement !== originalParent) {
+          if (originalNext && originalNext.parentElement === originalParent) {
+            originalParent.insertBefore(adminBox, originalNext); adminBox.classList.remove("card");
+          } else {
+            originalParent.appendChild(adminBox); adminBox.classList.remove("card");
+          }
+        }
+      }
+      placeAdmin();
+      window.addEventListener('resize', placeAdmin);
+    })();
+  </script>
+
 </body>
 </html>
