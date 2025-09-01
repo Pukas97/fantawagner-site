@@ -50,6 +50,42 @@ const extendSecondsRef  = db.ref('settings/extendSeconds');
 const START_BUDGET = 500;
 
 // === Stato
+// === Roster limits ===
+const ROSTER_LIMITS = { 'P': 3, 'D': 8, 'C': 8, 'A': 6 };
+
+function rosterSnapshot(me){
+  const own = {P:0,D:0,C:0,A:0};
+  const leading = {P:0,D:0,C:0,A:0};
+  try {
+    (assignmentsCache||[]).forEach(x => {
+      if (x && x.winner === me && x.role) { own[x.role] = (own[x.role]||0) + 1; }
+    });
+    Object.keys(auctionsCache||{}).forEach(k => {
+      const a = auctionsCache[k];
+      if (a && a.status === 'open' && a.lastBidder === me && a.role) {
+        leading[a.role] = (leading[a.role]||0) + 1;
+      }
+    });
+  } catch(e){}
+  return { own, leading };
+}
+
+function canLeadMore(me, role, key){
+  const limit = ROSTER_LIMITS[role] || 99;
+  const snap = rosterSnapshot(me);
+  const alreadyLeader = (auctionsCache[key] && auctionsCache[key].lastBidder === me);
+  const currentLeading = (snap.leading[role]||0) - (alreadyLeader ? 1 : 0);
+  // +1 è il nuovo "gettone" che stai provando a mettere su questa asta
+  return ( (snap.own[role]||0) + currentLeading + 1 ) <= limit;
+}
+
+function canOpenNew(me, role){
+  const limit = ROSTER_LIMITS[role] || 99;
+  const snap = rosterSnapshot(me);
+  // Non aprire nuove aste se non hai più "capienza potenziale"
+  return ( (snap.own[role]||0) + (snap.leading[role]||0) ) < limit;
+}
+
 var rows = [];
 var headers = [];
 var filterValue = '';
@@ -213,6 +249,13 @@ function startAuctionFromRow(r){
 
   var endAt = now() + Math.max(1, parseInt(timerMinutes,10)||1) * 60000;
 
+  // Guard capienza: blocca apertura se non hai slot disponibili per questo ruolo
+  var meOpen = (el('myName')?.value || '').trim() || 'Anonimo';
+  if (!canOpenNew(meOpen, role)) {
+    alert('Non puoi aprire una nuova asta per questo ruolo: raggiungeresti/sforeresti la rosa massima.');
+    return;
+  }
+
   auctionsRef.push({
     player: player,
     role: role,
@@ -231,6 +274,9 @@ function startAuctionFromRow(r){
 
 // Bids
 window.raiseBid = function(key, amount){
+  // Guard capienza per ruolo
+  if (!canLeadMore(me, a.role, key)) { alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Libera una delle aste dove sei vincente o attendi di essere superato.'); return; }
+
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
   var next = toNumber(a.bid) + amount;
@@ -246,6 +292,9 @@ window.raiseBid = function(key, amount){
 };
 
 window.customBid = function(key){
+  // Guard capienza per ruolo
+  if (!canLeadMore(me, a.role, key)) { alert('Hai già raggiunto il numero massimo potenziale per questo ruolo. Libera una delle aste dove sei vincente o attendi di essere superato.'); return; }
+
   var me = el('myName').value.trim() || 'Anonimo';
   var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
   var val = toNumber(document.getElementById('manualBid-'+key).value); if (!val) return;
@@ -364,44 +413,6 @@ function renderAuctions(){
 
   // FILTRO: mostra solo open
   var openKeys = keys.filter(function(k){ return auctionsCache[k] && auctionsCache[k].status === 'open'; });
-  // Toolbar ordinamento
-  var sortMode = localStorage.getItem('auctionSort') || 'time';
-  var toolbar = document.createElement('div');
-  toolbar.className = 'row between';
-  toolbar.style.margin = '0 0 10px 0';
-  toolbar.innerHTML = '<div class="muted">Aste aperte</div>' +
-    '<div class="row" style="gap:6px; align-items:center;">' +
-      '<label class="muted" for="auctionSort">Ordina per:</label>' +
-      '<select id="auctionSort" class="input sm">' +
-        '<option value="time">Scadenza</option>' +
-        '<option value="bid">Rilancio</option>' +
-      '</select>' +
-    '</div>';
-  box.appendChild(toolbar);
-  var sel = el('auctionSort');
-  if (sel) {
-    sel.value = sortMode;
-    sel.addEventListener('change', function(){
-      localStorage.setItem('auctionSort', this.value);
-      renderAuctions();
-    });
-  }
-  // Ordinamento openKeys
-  openKeys.sort(function(k1, k2){
-    var a1 = auctionsCache[k1] || {}; var a2 = auctionsCache[k2] || {};
-    var e1 = a1.endAt || ((a1.createdAt || now()) + Math.max(1, parseInt(timerMinutes||2,10))*60000);
-    var e2 = a2.endAt || ((a2.createdAt || now()) + Math.max(1, parseInt(timerMinutes||2,10))*60000);
-    if ((localStorage.getItem('auctionSort') || 'time') === 'bid') {
-      var b1 = toNumber(a1.bid)||0; var b2 = toNumber(a2.bid)||0;
-      if (b1 !== b2) return b2 - b1; // più alto prima
-      return e1 - e2;                // a parità di bid, prima chi scade prima
-    } else {
-      var r1 = e1 - now(); var r2 = e2 - now();
-      if (r1 !== r2) return r1 - r2; // prima chi scade prima
-      return (toNumber(a2.bid)||0) - (toNumber(a1.bid)||0); // tie-break: bid più alto
-    }
-  });
-
 
   if (!openKeys.length){
     var empty = document.createElement('div');
@@ -696,6 +707,4 @@ auctionsRef.on('child_changed', function(snap){
     notifyBidOnce(snap.key, a);
   }
 });
-
-
 
