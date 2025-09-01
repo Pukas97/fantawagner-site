@@ -12,7 +12,7 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Mostra manualmente SOLO se il payload NON ha già "notification" (evita doppioni)
+// Background push: mostra manualmente SOLO se il payload non contiene già "notification"
 messaging.onBackgroundMessage((payload) => {
   const hasNotificationBlock = !!payload.notification;
   const title = (payload.notification?.title || payload.data?.title || 'Notifica Asta');
@@ -30,17 +30,21 @@ messaging.onBackgroundMessage((payload) => {
   }
 });
 
-// Click sulla notifica: apri/porta in primo piano la pagina
+// Click: apri/porta in primo piano la pagina
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const urlToOpen = (event.notification?.data && event.notification.data.url) || '/';
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      for (const client of windowClients) {
-        if (client.url === urlToOpen && 'focus' in client) return client.focus();
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      for (let client of windowClients) {
+        if (client.url === urlToOpen && 'focus' in client) {
+          return client.focus();
+        }
       }
-      if (clients.openWindow) return clients.openWindow(urlToOpen);
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
     })
   );
 });
