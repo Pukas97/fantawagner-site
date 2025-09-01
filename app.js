@@ -360,18 +360,24 @@ window.resetEverything = function () {
 };
 
 
-// === Notifiche per-asta: toggle locale ===
+// === Notifiche per-asta: toggle locale (DOM-safe) ===
 window.toggleAuctionMute = function(key){
   if (!currentTokenKey) {
     alert('Per gestire le notifiche devi prima abilitare le push.');
     try { enablePush(); } catch(e) {}
     return;
   }
-  const cur = !!(muteMap && muteMap[key]);
-  const next = !cur;
+  const next = !((muteMap && muteMap[key]) === true);
   firebase.database().ref('tokens/' + currentTokenKey + '/mute/' + key).set(next).then(function(){
     muteMap = Object.assign({}, muteMap, { [key]: next });
-    renderAuctions();
+    // aggiorna solo il bottone se presente
+    var mb = document.getElementById('mute-'+key);
+    if (mb) {
+      var off = next;
+      mb.textContent = off ? 'Notifiche asta: OFF' : 'Notifiche asta: ON';
+      if (off) { mb.classList.remove('primary'); mb.classList.add('danger'); }
+      else { mb.classList.remove('danger'); mb.classList.add('primary'); }
+    }
   });
 };
 function isAuctionMuted(key){ return !!(muteMap && muteMap[key]); }
@@ -427,12 +433,7 @@ function renderAuctions(){
         <div class="row" style="margin-top:8px;">
           <button class="btn warn sm" onclick="assignAuction('${key}')">Chiudi e assegna</button>
           <span></span>
-        </div>
-        <div class="row" style="margin-top:8px;">
-          <button id="mute-${key}" class="btn sm" onclick="toggleAuctionMute('${key}')"></button>
-          <span></span>
-        </div>
-        `;
+        </div>`;
 
       // Timer placeholder
       var remain = (a.endAt||0) - now();
@@ -445,15 +446,26 @@ function renderAuctions(){
        <div class="price">${a.bid||0}</div>
        <div class="last-bidder">Ultimo rilancio: <span class="who">${a.lastBidder||'—'}</span></div>
        ${controls}`;
+      // --- Toggle notifiche (DOM, no template fragile) ---
+      (function(){
+        try{
+          var row = document.createElement('div');
+          row.className = 'row';
+          row.style.marginTop = '8px';
+          var btn = document.createElement('button');
+          btn.id = 'mute-'+key;
+          btn.className = 'btn sm';
+          var off = isAuctionMuted(key);
+          btn.textContent = off ? 'Notifiche asta: OFF' : 'Notifiche asta: ON';
+          if (off) { btn.classList.add('danger'); } else { btn.classList.add('primary'); }
+          btn.onclick = function(){ toggleAuctionMute(key); };
+          var spacer = document.createElement('span');
+          row.appendChild(btn);
+          row.appendChild(spacer);
+          card.appendChild(row);
+        }catch(e){}
+      })();
       box.appendChild(card);
-      // aggiorna label pulsante notifiche
-      var mb = document.getElementById('mute-'+key);
-      if (mb) {
-        var off = isAuctionMuted(key);
-        mb.textContent = off ? 'Notifiche asta: OFF' : 'Notifiche asta: ON';
-        if (off) { mb.classList.remove('primary'); mb.classList.add('danger'); }
-        else { mb.classList.remove('danger'); mb.classList.add('primary'); }
-      }
     });
   }
 
@@ -635,7 +647,17 @@ window.enablePush = async function(){
       at: Date.now()
     });
 
-    alert('Push abilitate su questo dispositivo ✔');
+    
+    currentTokenKey = tokenKey;
+    localStorage.setItem('fcmToken', token);
+    localStorage.setItem('fcmTokenKey', currentTokenKey);
+    try{
+      firebase.database().ref('tokens/' + currentTokenKey + '/mute').on('value', function(s){
+        muteMap = s.val() || {};
+        try { renderAuctions(); } catch(e){}
+      });
+    }catch(e){}
+alert('Push abilitate su questo dispositivo ✔');
   } catch (e) {
     debug('enablePush ERROR: ' + (e && e.message || String(e)));
     alert('Impossibile abilitare la push.');
