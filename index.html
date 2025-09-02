@@ -148,7 +148,21 @@ body{ font-size: var(--fs-body); line-height: 1.35; -webkit-tap-highlight-color:
     min-height:auto; padding:.25rem .5rem; border-radius:10px;
     border:1px solid #334155; background:#0b1220; font-size:.7rem;
   }
-  /* Avoid layout gap from its row */
+  /* Transform close button into a corner badge (left) */
+#auctionsList .auction-card [id^="close-"]{
+  position:absolute; 
+  top:10px; 
+  left:10px;
+  min-height:auto; 
+  padding:.25rem .5rem; 
+  border-radius:10px;
+  font-size:.7rem;
+}
+/* Avoid layout gap from its row */
+#auctionsList .auction-card [id^="close-"] ~ span{ 
+  display:none; 
+}
+/* Avoid layout gap from its row */
   #auctionsList .auction-card [id^="mute-"] ~ span{ display:none; }
 }
 
