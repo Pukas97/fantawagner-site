@@ -23,7 +23,7 @@
     .btn.danger { background:#ef4444; border-color:#dc2626; color:white; }
     .btn:disabled { opacity:.5; cursor:not-allowed; }
     .btn.sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
-    .btn.xs { padding: 4px 8px; font-size: 11px; border-radius: 8px; min-height: 32px; }
+    .btn.xs { padding: 4px 8px; font-size: 11px; border-radius: 9999px; min-height: 32px; }
     .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #334155; background:#0b1220; font-size:12px; color:#cbd5e1; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 8px 10px; border-bottom:1px solid #1f2937; font-size: 14px; }
@@ -109,7 +109,17 @@
   .grid-3 { grid-template-columns: 1fr 1fr; }
   .grid-3 > :nth-child(3) { grid-column: 1 / -1; }
 }
-</style>
+
+@media (max-width:700px){
+  #auctionsList .auction-card .btn.warn.xs{
+    background:#f59e0b; border-color:#d97706; color:#111827;
+    font-weight:600; padding:6px 10px; min-height:36px;
+    border-radius:9999px; width:auto; justify-self:start;
+    box-shadow:0 2px 8px rgba(0,0,0,.25);
+  }
+}
+
+  </style>
 
   <!-- Firebase libs -->
   <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js" defer></script>
