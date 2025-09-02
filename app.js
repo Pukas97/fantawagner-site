@@ -783,3 +783,23 @@ auctionsRef.on('child_changed', function(snap){
 
 
 
+
+
+/* Conferma chiusura e assegnazione (solo UI) */
+window.confirmAssign = function(key){
+  try{
+    var a = auctionsCache && auctionsCache[key];
+    var player = a && a.player ? a.player : 'giocatore';
+    var price  = (a && a.bid != null) ? a.bid : 0;
+    var winner = a && a.lastBidder ? a.lastBidder : '—';
+    var msg = 'Confermi la chiusura e l\'assegnazione?\n\n' +
+              'Giocatore: ' + player + '\n' +
+              'Prezzo: ' + price + '\n' +
+              'Vincitore: ' + winner;
+    if (window.confirm(msg)){
+      assignAuction(key);
+    }
+  }catch(e){
+    if (window.confirm('Confermi la chiusura e assegnazione?')) assignAuction(key);
+  }
+};
