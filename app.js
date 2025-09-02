@@ -333,8 +333,24 @@ window.customBid = function(key){
 
 // Chiudi/assegna manuale
 window.assignAuction = function(key){
-  var a = auctionsCache[key]; if (!a || a.status !== 'open') return;
-  if (!a.lastBidder || !toNumber(a.bid)) { alert('Nessuna offerta valida da assegnare.'); return; }
+  var a = auctionsCache[key]; 
+  if (!a || a.status !== 'open') return;
+  if (!a.lastBidder || !toNumber(a.bid)) { 
+    alert('Nessuna offerta valida da assegnare.'); 
+    return; 
+  }
+  var msg = 'Confermi la chiusura e assegnazione?
+
+' +
+            'Giocatore: ' + (a.player || '—') + '
+' +
+            'A: ' + (a.lastBidder || '—') + '
+' +
+            'Prezzo: ' + toNumber(a.bid) + ' crediti
+
+' +
+            'Operazione irreversibile.';
+  if (!confirm(msg)) return;
   assignmentsRef.push({
     player: a.player, role: a.role, team: a.team,
     price: toNumber(a.bid), winner: a.lastBidder, at: now()
@@ -487,7 +503,7 @@ function renderAuctions(){
           <button class="btn primary sm" onclick="customBid('${key}')">Rilancia</button>
         </div>
         <div class="row" style="margin-top:8px;">
-          <button class="btn warn sm" onclick="assignAuction('${key}')">Chiudi e assegna</button>
+          <button id="close-${key}" class="btn warn sm" title="Chiudi e assegna" onclick="assignAuction(\'${key}\')">Chiudi</button>
           <span></span>
         </div>
         <div class="row" style="margin-top:8px;">
