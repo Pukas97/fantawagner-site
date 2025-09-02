@@ -487,7 +487,7 @@ function renderAuctions(){
           <button class="btn primary sm" onclick="customBid('${key}')">Rilancia</button>
         </div>
         <div class="row" style="margin-top:8px;">
-          <button class="btn warn xs" onclick="confirmAssign('${key}')">Chiudi e assegna</button>
+          <button class="btn warn sm" onclick="assignAuction('${key}')">Chiudi e assegna</button>
           <span></span>
         </div>
         <div class="row" style="margin-top:8px;">
@@ -740,7 +740,7 @@ function notifyOpenOnce(key, a){
       const title = 'Asta aperta';
       const body  = a.player + ' (' + (a.role||'') + (a.team ? ', ' + a.team : '') + ')';
       // niente notifica locale: delego tutto alle push per evitare doppioni
-      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+      try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'bid', payload: { auctionKey: key, player: a.player, bid: nextBid, bidder: a.lastBidder || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
     }
   });
 }
@@ -760,7 +760,7 @@ function notifyBidOnce(key, a){
       if (a.status === 'open' && nextBid > 0) {
         const title = 'Nuovo rilancio';
         const body  = a.player + ' a ' + nextBid + ' (da ' + (a.lastBidder||'') + ')';
-        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'auction_open', payload: { auctionKey: key, player: a.player, role: a.role, team: a.team, openedByName: a.openedBy || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
+        try { fetch('/.netlify/functions/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'bid', payload: { auctionKey: key, player: a.player, bid: nextBid, bidder: a.lastBidder || '' } }) }); } catch(e) { debug('notify open err ' + (e&&e.message||e)); }
       }
     }
   });
@@ -783,23 +783,3 @@ auctionsRef.on('child_changed', function(snap){
 
 
 
-
-
-/* Conferma chiusura e assegnazione (solo UI) */
-window.confirmAssign = function(key){
-  try{
-    var a = auctionsCache && auctionsCache[key];
-    var player = a && a.player ? a.player : 'giocatore';
-    var price  = (a && a.bid != null) ? a.bid : 0;
-    var winner = a && a.lastBidder ? a.lastBidder : '—';
-    var msg = 'Confermi la chiusura e l\'assegnazione?\n\n' +
-              'Giocatore: ' + player + '\n' +
-              'Prezzo: ' + price + '\n' +
-              'Vincitore: ' + winner;
-    if (window.confirm(msg)){
-      assignAuction(key);
-    }
-  }catch(e){
-    if (window.confirm('Confermi la chiusura e assegnazione?')) assignAuction(key);
-  }
-};
