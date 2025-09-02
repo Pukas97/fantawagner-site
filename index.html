@@ -23,6 +23,7 @@
     .btn.danger { background:#ef4444; border-color:#dc2626; color:white; }
     .btn:disabled { opacity:.5; cursor:not-allowed; }
     .btn.sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+    .btn.xs { padding: 4px 8px; font-size: 11px; border-radius: 8px; min-height: 32px; }
     .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #334155; background:#0b1220; font-size:12px; color:#cbd5e1; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 8px 10px; border-bottom:1px solid #1f2937; font-size: 14px; }
@@ -108,60 +109,7 @@
   .grid-3 { grid-template-columns: 1fr 1fr; }
   .grid-3 > :nth-child(3) { grid-column: 1 / -1; }
 }
-
-/* === Mobile cards, chips, badges, typography, accessibility === */
-:root{
-  --fs-title: clamp(1rem, 2.5vw, 1.15rem);
-  --fs-body: clamp(.9rem, 2.2vw, 1rem);
-}
-body{ font-size: var(--fs-body); line-height: 1.35; -webkit-tap-highlight-color: transparent; }
-
-/* Chips per ruolo */
-.chip{ padding:.2rem .5rem; border-radius:999px; font-weight:600; font-size:.75rem; border:1px solid #364152; background:#0b1220; }
-.role-P{ background: #0ea5e922; color:#67e8f9; border-color:#164e63; }
-.role-D{ background: #22c55e22; color:#86efac; border-color:#14532d; }
-.role-C{ background: #eab30822; color:#fde68a; border-color:#713f12; }
-.role-A{ background: #ef444422; color:#fca5a5; border-color:#7f1d1d; }
-
-/* Badge style (used for mute state button on mobile) */
-.badge{ font-size:.7rem; padding:.2rem .45rem; border-radius:8px; border:1px solid #3a3a3a; }
-.badge.muted{ background:#334155; color:#cbd5e1; }
-.badge.live{ background:#064e3b; color:#a7f3d0; }
-
-/* Preferenze utente */
-@media (prefers-reduced-motion: reduce){
-  *{ animation:none !important; transition:none !important; }
-}
-@media (prefers-color-scheme: dark){
-  :root{ color-scheme: dark; }
-}
-
-/* Auction card enhancements */
-@media (max-width:700px){
-  .auction-card{ background:#111827; border:1px solid #1f2937; border-radius:14px; padding:12px; box-shadow:0 6px 20px rgba(0,0,0,.25); position:relative; margin-bottom:10px; }
-  .auction-card .headRow{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .auction-card .headRow .player{ font-size: var(--fs-title); }
-  .auction-card .team{ opacity:.8; }
-  /* Transform mute button into a corner badge */
-  #auctionsList .auction-card [id^="mute-"]{
-    position:absolute; top:10px; right:10px;
-    min-height:auto; padding:.25rem .5rem; border-radius:10px;
-    border:1px solid #334155; background:#0b1220; font-size:.7rem;
-  }
-  /* Avoid layout gap from its row */
-  #auctionsList .auction-card [id^="mute-"] ~ span{ display:none; }
-}
-
-/* Mount for admin box on mobile */
-@media (max-width:700px){
-  #adminMount{ padding: 8px 12px 12px; }
-}
-
-/* Utility: hide elements only on mobile or desktop if such classes exist */
-@media (max-width:700px){ .mobile-only{ display:block; } }
-@media (min-width:701px){ .mobile-only{ display:none; } }
-
-  </style>
+</style>
 
   <!-- Firebase libs -->
   <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js" defer></script>
@@ -196,7 +144,6 @@ body{ font-size: var(--fs-body); line-height: 1.35; -webkit-tap-highlight-color:
         </div>
 
         <div class="space"></div>
-        <div id="adminBox">
         <div class="muted">Zona sicura (amministrazione)</div>
         <div class="row" style="align-items:start;">
           <div class="stack">
@@ -219,8 +166,7 @@ body{ font-size: var(--fs-body); line-height: 1.35; -webkit-tap-highlight-color:
 
         <div id="debugBox"></div>
       </div>
-    </div>
-</section>
+    </section>
 
     <!-- Colonna destra (sopra): Listone -->
     <section class="card">
@@ -268,28 +214,5 @@ body{ font-size: var(--fs-body); line-height: 1.35; -webkit-tap-highlight-color:
   </div>
 
   <div class="footer">Ogni partecipante parte da 500 crediti. Al momento dell'assegnazione, il costo viene sottratto dal budget residuo mostrato sotto al nome.</div>
-  <div id="adminMount" class="mobile-only"></div>
-
-<script>
-(function(){
-  var __adminOrigParent = null, __adminOrigNext = null;
-  function mountAdmin(){
-    var box = document.getElementById('adminBox');
-    var mount = document.getElementById('adminMount');
-    if (!box || !mount) return;
-    var isMobile = window.matchMedia('(max-width: 700px)').matches;
-    if (!__adminOrigParent){ __adminOrigParent = box.parentElement; __adminOrigNext = box.nextSibling; }
-    if (isMobile && box.parentElement !== mount){
-      mount.appendChild(box);
-    } else if (!isMobile && mount.contains(box)){
-      if (__adminOrigParent){ __adminOrigParent.insertBefore(box, __adminOrigNext); }
-    }
-  }
-  window.addEventListener('resize', mountAdmin);
-  window.addEventListener('DOMContentLoaded', mountAdmin);
-  mountAdmin();
-})();
-</script>
-
 </body>
 </html>
